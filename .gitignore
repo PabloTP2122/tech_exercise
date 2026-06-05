@@ -37,3 +37,20 @@ share/python-wheels/
 .langgraph_api
 *.pckl
 .langgraph_api/*.pckl
+
+# Vector store
+chroma_db/
+
+# Tool caches
+.mypy_cache/
+.pytest_cache/
+
+# Data / build artefacts
+data/
+frontend/node_modules/
+frontend/dist/
+
+#Claude
+.claude
+# Spec dir is local-only — never commit anything under spec/
+spec/**
