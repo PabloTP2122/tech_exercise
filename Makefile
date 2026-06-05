@@ -11,11 +11,11 @@ install: ## Install deps + pre-commit hooks
 dev: ## Start FastAPI dev server on :8000
 	uv run uvicorn api.main:app --reload --port 8000
 
-ingest: ## Full pipeline: fetch articles -> embed -> load ChromaDB
+ingest: ## Fetch articles -> embed -> load ChromaDB (skips if already populated)
 	uv run python -m ingest.load_chroma
 
-load: ## Alias for ingest (re-embed)
-	uv run python -m ingest.load_chroma
+load: ## Force rebuild: delete collection + re-embed from scratch
+	uv run python -m ingest.load_chroma --force
 
 test: ## Run pytest
 	uv run pytest -v

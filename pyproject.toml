@@ -11,6 +11,7 @@ dependencies = [
     "langchain",
     "langchain-openai",
     "langchain-community",
+    "langchain-chroma",
     "langgraph",
     "chromadb",
     "beautifulsoup4",
