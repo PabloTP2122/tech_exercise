@@ -16,7 +16,7 @@ import logging
 import time
 
 import chromadb
-from chromadb import ClientAPI
+from chromadb.api import ClientAPI
 from langchain_chroma import Chroma
 from langchain_community.vectorstores.utils import filter_complex_metadata
 from langchain_core.documents import Document
@@ -32,8 +32,13 @@ logger = logging.getLogger(__name__)
 _BATCH_SIZE = 1000  # stay well below the chromadb 5461-record ceiling
 
 
-def _build_chunks(docs: list[Document]) -> list[Document]:
-    """Clean → split → prepend contextual header."""
+def build_chunks(docs: list[Document]) -> list[Document]:
+    """Clean → split → prepend contextual header.
+
+    Produces the exact strings that will be passed to the embedder — i.e. the
+    "vector-view" of the corpus.  Public so the smoke-test can reuse this
+    transform to inspect embed inputs without actually calling OpenAI.
+    """
     settings = get_settings()
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=800,
@@ -113,7 +118,7 @@ def main(*, force: bool = False) -> None:
     docs = build_documents()
     logger.info("Loaded %d articles from sitemap.", len(docs))
 
-    chunks = _build_chunks(docs)
+    chunks = build_chunks(docs)
 
     # OpenAIEmbeddings picks up OPENAI_API_KEY from the environment automatically;
     # passing it explicitly is not supported in newer langchain-openai versions.

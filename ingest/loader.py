@@ -2,6 +2,8 @@ import json
 import logging
 import re
 from typing import Any, cast
+from urllib.request import urlopen
+from xml.etree import ElementTree
 
 from bs4 import BeautifulSoup
 from langchain_community.document_loaders import SitemapLoader
@@ -62,13 +64,62 @@ def _meta_function(meta: dict[str, Any], soup: BeautifulSoup) -> dict[str, Any]:
     }
 
 
-def build_documents() -> list[Document]:
+def list_article_urls() -> list[str]:
+    """Return all article URLs from the sitemap WITHOUT fetching article bodies.
+
+    Parses the sitemap XML directly (cheap, single HTTP request) and applies the
+    same ``/blog/{slug}`` filter used by :func:`build_documents`.  This lets callers
+    select a deterministic subset of URLs for testing or incremental pipelines
+    without triggering a full 400+ article crawl.
+
+    Returns:
+        List of article URLs in sitemap order.  Returns ``[]`` on any fetch error.
+    """
+    settings = get_settings()
+    base = settings.blog_base_url
+    pattern = re.compile(rf"{re.escape(base)}/blog/(?!topic/|page/)[\w-]+/?$")
+
+    try:
+        with urlopen(f"{base}/sitemap.xml", timeout=15) as resp:  # noqa: S310
+            tree = ElementTree.parse(resp)
+    except Exception as exc:
+        logger.warning("Could not fetch sitemap for URL listing: %s", exc)
+        return []
+
+    ns = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
+    urls: list[str] = []
+    for loc in tree.findall(".//sm:loc", ns):
+        url = (loc.text or "").strip()
+        if pattern.match(url):
+            urls.append(url)
+    logger.info("list_article_urls: found %d article URLs", len(urls))
+    return urls
+
+
+def build_documents(filter_urls: list[str] | None = None) -> list[Document]:
+    """Load articles from the sitemap and return them as :class:`Document` objects.
+
+    Args:
+        filter_urls: Optional list of exact URLs to load.  When ``None`` (default)
+            all article URLs matching the standard regex are fetched (original
+            behaviour — fully backward-compatible).  Pass a one-element list to
+            fetch a single article for testing.
+
+    Returns:
+        List of :class:`Document` objects with full metadata.
+    """
     settings = get_settings()
     base = settings.blog_base_url
 
+    url_filter = (
+        filter_urls
+        if filter_urls is not None
+        else [rf"{re.escape(base)}/blog/(?!topic/|page/)[\w-]+/?$"]
+    )
+
     loader = SitemapLoader(
         web_path=f"{base}/sitemap.xml",
-        filter_urls=[rf"{re.escape(base)}/blog/(?!topic/|page/)[\w-]+/?$"],
+        filter_urls=url_filter,
         meta_function=_meta_function,
         continue_on_failure=True,
     )
