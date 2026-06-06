@@ -11,7 +11,7 @@ repos:
     rev: v1.10.0
     hooks:
       - id: mypy
-        additional_dependencies: [pydantic, pydantic-settings, fastapi]
+        additional_dependencies: [pydantic, pydantic-settings, fastapi, types-requests, requests]
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.6.0

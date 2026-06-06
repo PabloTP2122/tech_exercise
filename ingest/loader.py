@@ -1,132 +1,76 @@
-import json
-import logging
-import re
-from typing import Any, cast
-from urllib.request import urlopen
-from xml.etree import ElementTree
+"""Ingestion orchestrator — discover → fetch → extract → Document list.
 
-from bs4 import BeautifulSoup
-from langchain_community.document_loaders import SitemapLoader
+Single responsibility: wire :mod:`ingest.discovery`, :mod:`ingest.fetcher`,
+and :mod:`ingest.extract` together and expose the public API used by
+:mod:`ingest.load_chroma` and the test suite.
+
+Public API
+----------
+list_article_urls()
+    Thin alias → :func:`ingest.discovery.list_sitemap_urls` (kept for
+    backward-compatibility with :mod:`tests.test_pipeline_smoke`).
+build_documents(filter_urls=None)
+    Full ingest pipeline; returns :class:`~langchain_core.documents.Document`
+    objects ready for chunking and embedding.
+"""
+
+import logging
+
 from langchain_core.documents import Document
 
-from api.config import get_settings
+from ingest.discovery import discover_article_urls, list_sitemap_urls
+from ingest.extract import build_document
+from ingest.fetcher import fetch_all
 
 logger = logging.getLogger(__name__)
 
 
-def _extract_ld(soup: BeautifulSoup) -> dict[str, Any]:
-    try:
-        tag = soup.find("script", type="application/ld+json")
-        parsed: dict[str, Any] = json.loads(tag.string) if tag and tag.string else {}
-        return parsed
-    except Exception as exc:
-        logger.warning("JSON-LD parse error: %s", exc)
-        return {}
-
-
-def _categories(soup: BeautifulSoup) -> str:
-    """Extract topic slugs from /blog/topic/{slug} links — the real category source on Bitovi."""
-    slugs: list[str] = []
-    for a in soup.find_all("a", href=True):
-        raw = a["href"]
-        if not isinstance(raw, str):
-            continue
-        if "/blog/topic/" not in raw:
-            continue
-        slug = raw.rstrip("/").split("/blog/topic/")[-1].strip().lower()
-        if slug and slug not in slugs:
-            slugs.append(slug)
-    return "," + ",".join(slugs) + "," if slugs else ","
-
-
-def _meta_function(meta: dict[str, Any], soup: BeautifulSoup) -> dict[str, Any]:
-    source_url: str = meta.get("source", "")
-    ld = _extract_ld(soup)
-
-    if not ld:
-        logger.warning("No JSON-LD found for %s", source_url)
-
-    author_raw = ld.get("author", "")
-    author = author_raw.get("name", "") if isinstance(author_raw, dict) else str(author_raw)
-
-    categories = _categories(soup)
-    if categories == ",":
-        logger.warning("No topic links found for %s — categories will be empty", source_url)
-
-    return {
-        **meta,
-        "source_url": source_url,
-        "title": ld.get("headline", ""),
-        "description": ld.get("description", ""),
-        "author": author,
-        "published_at": ld.get("datePublished", ""),
-        "categories": categories,
-    }
-
-
 def list_article_urls() -> list[str]:
-    """Return all article URLs from the sitemap WITHOUT fetching article bodies.
+    """Return all article URLs from the sitemap.
 
-    Parses the sitemap XML directly (cheap, single HTTP request) and applies the
-    same ``/blog/{slug}`` filter used by :func:`build_documents`.  This lets callers
-    select a deterministic subset of URLs for testing or incremental pipelines
-    without triggering a full 400+ article crawl.
+    Thin alias for :func:`ingest.discovery.list_sitemap_urls` kept for
+    backward-compatibility with existing callers (e.g. the smoke test).
 
     Returns:
-        List of article URLs in sitemap order.  Returns ``[]`` on any fetch error.
+        Article URLs in sitemap order.  Returns ``[]`` on error.
     """
-    settings = get_settings()
-    base = settings.blog_base_url
-    pattern = re.compile(rf"{re.escape(base)}/blog/(?!topic/|page/)[\w-]+/?$")
-
-    try:
-        with urlopen(f"{base}/sitemap.xml", timeout=15) as resp:  # noqa: S310
-            tree = ElementTree.parse(resp)
-    except Exception as exc:
-        logger.warning("Could not fetch sitemap for URL listing: %s", exc)
-        return []
-
-    ns = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
-    urls: list[str] = []
-    for loc in tree.findall(".//sm:loc", ns):
-        url = (loc.text or "").strip()
-        if pattern.match(url):
-            urls.append(url)
-    logger.info("list_article_urls: found %d article URLs", len(urls))
-    return urls
+    return list_sitemap_urls()
 
 
 def build_documents(filter_urls: list[str] | None = None) -> list[Document]:
-    """Load articles from the sitemap and return them as :class:`Document` objects.
+    """Load, fetch, and extract Bitovi blog articles as Documents.
+
+    When ``filter_urls`` is ``None`` (default) the full article set is
+    discovered via :func:`ingest.discovery.discover_article_urls`.  Pass an
+    explicit list to fetch a deterministic subset (e.g. one article for
+    testing) — the list is used verbatim, bypassing discovery.
 
     Args:
-        filter_urls: Optional list of exact URLs to load.  When ``None`` (default)
-            all article URLs matching the standard regex are fetched (original
-            behaviour — fully backward-compatible).  Pass a one-element list to
-            fetch a single article for testing.
+        filter_urls: Optional explicit list of article URLs to fetch.  Pass
+            ``None`` to ingest all articles (runs discovery + cross-check).
 
     Returns:
-        List of :class:`Document` objects with full metadata.
+        List of :class:`~langchain_core.documents.Document` objects with all
+        six metadata keys populated and clean ``page_content``.
     """
-    settings = get_settings()
-    base = settings.blog_base_url
+    if filter_urls is not None:
+        urls = filter_urls
+        logger.info("build_documents: using %d explicit URL(s) (no discovery)", len(urls))
+    else:
+        urls = discover_article_urls()
 
-    url_filter = (
-        filter_urls
-        if filter_urls is not None
-        else [rf"{re.escape(base)}/blog/(?!topic/|page/)[\w-]+/?$"]
-    )
+    docs: list[Document] = []
+    for url, html in fetch_all(urls):
+        if html is None:
+            logger.warning("build_documents: skipping %s (fetch failed)", url)
+            continue
+        try:
+            doc = build_document(url, html)
+            docs.append(doc)
+        except Exception as exc:
+            logger.warning("build_documents: skipping %s (extract error: %s)", url, exc)
 
-    loader = SitemapLoader(
-        web_path=f"{base}/sitemap.xml",
-        filter_urls=url_filter,
-        meta_function=_meta_function,
-        continue_on_failure=True,
-    )
-    loader.requests_per_second = 2  # be polite to the server
-
-    docs = cast(list[Document], loader.load())
-    logger.info("Loaded %d documents from sitemap", len(docs))
+    logger.info("build_documents: produced %d documents", len(docs))
     return docs
 
 

@@ -20,13 +20,11 @@ quality report before paying for embedding.
 """
 
 import json
-import re
 from pathlib import Path
 
 import pytest
 from langchain_core.documents import Document
 
-from ingest.clean import clean_document
 from ingest.load_chroma import build_chunks
 from ingest.loader import build_documents, list_article_urls
 
@@ -52,12 +50,15 @@ _FIXTURE_PATH = Path(__file__).parent / "data" / "raw" / "test_1.json"
 def emulate_vector_view(docs: list[Document]) -> list[dict]:  # type: ignore[type-arg]
     """Return the exact embed-input strings + metadata for a list of documents.
 
-    Applies clean → split → contextual-header in exactly the same way
+    Applies split → contextual-header in exactly the same way
     :func:`~ingest.load_chroma.build_chunks` does (it re-uses that function),
     so the output faithfully represents what the embedder will receive.
 
+    Documents arrive already clean (body extracted by :mod:`ingest.extract`),
+    so ``raw_char_len`` and ``clean_char_len`` both reflect the clean body size.
+
     Args:
-        docs: Raw documents as returned by :func:`~ingest.loader.build_documents`.
+        docs: Documents as returned by :func:`~ingest.loader.build_documents`.
 
     Returns:
         List of dicts, one per input document::
@@ -69,13 +70,13 @@ def emulate_vector_view(docs: list[Document]) -> list[dict]:  # type: ignore[typ
                 "author": str,
                 "published_at": str,
                 "categories": str,           # ",slug,slug,"
-                "raw_char_len": int,         # len(doc.page_content) before cleaning
-                "clean_char_len": int,       # len after cleaning
+                "raw_char_len": int,         # len(doc.page_content)
+                "clean_char_len": int,       # same as raw_char_len (cleaning at fetch time)
                 "num_chunks": int,
                 "chunks": [
                     {
                         "chunk_index": int,
-                        "start_index": int | None,   # char offset in cleaned body
+                        "start_index": int | None,   # char offset in body
                         "embedded_text": str,        # exact string the embedder sees
                         "embedded_char_len": int,
                     },
@@ -96,7 +97,9 @@ def emulate_vector_view(docs: list[Document]) -> list[dict]:  # type: ignore[typ
     for doc in docs:
         url: str = doc.metadata.get("source_url") or doc.metadata.get("source", "")
         raw_len = len(doc.page_content)
-        clean_len = len(clean_document(doc).page_content)
+        # Cleaning is applied at fetch time in ingest.extract.build_document;
+        # by the time we have a Document, page_content is already the clean body.
+        clean_len = raw_len
         doc_chunks = groups.get(url, [])
 
         records.append(
@@ -143,10 +146,9 @@ def test_single_document_pipeline() -> None:
 
     target_url = urls[0]
 
-    # 2. Fetch exactly one article body through the real loader pipeline.
-    #    SitemapLoader's filter_urls is a regex list; escape the literal URL so
-    #    it matches only that one entry.
-    docs = build_documents(filter_urls=[re.escape(target_url)])
+    # 2. Fetch exactly one article body through the new SRP pipeline.
+    #    filter_urls is now a plain URL list (no regex); pass the URL verbatim.
+    docs = build_documents(filter_urls=[target_url])
     if not docs:
         pytest.skip(f"build_documents returned no docs for {target_url} (network error).")
 

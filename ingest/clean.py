@@ -1,10 +1,14 @@
 """Content cleaning for Bitovi blog articles.
 
-Strips site chrome (nav, footer, cookie banner, CTAs) from raw SitemapLoader
-output by targeting the HubSpot CMS article-body selector
-``#hs_cos_wrapper_post_body``.  Falls back to the original content if the
-selector is absent, logging a warning so the data quality issue is visible
-without silently dropping articles.
+Single responsibility: given **raw HTML**, extract only the article body
+(``#hs_cos_wrapper_post_body``) and return clean plain text.  Nav, footer,
+cookie banners, tracking pixels, and related-post blocks are stripped.
+
+Called by :func:`ingest.extract.build_document` which supplies raw HTML from
+:mod:`ingest.fetcher`, so the selector always finds its target.
+
+Falls back to the original string if the selector is absent (logging a warning)
+to avoid silent data-loss; callers should treat this as a data-quality signal.
 """
 
 import logging
@@ -20,13 +24,12 @@ _BODY_SELECTOR = "#hs_cos_wrapper_post_body"
 def clean_html(html: str) -> str:
     """Return the clean article-body text from a full Bitovi HTML page.
 
-    Extracts only the ``#hs_cos_wrapper_post_body`` element.  If the selector
-    is absent the function returns ``html`` unchanged (caller should pass the
-    raw ``page_content`` string, which may already be pre-rendered text rather
-    than HTML; BeautifulSoup handles both gracefully).
+    Extracts only the ``#hs_cos_wrapper_post_body`` element, stripping nav,
+    footer, tracking pixels, and related-post blocks.  If the selector is
+    absent the function returns ``html`` unchanged and logs a warning.
 
     Args:
-        html: Raw HTML string (or pre-rendered text) as returned by the loader.
+        html: Raw HTML string as returned by :func:`ingest.fetcher.fetch_html`.
 
     Returns:
         Cleaned article body text, or the original ``html`` string if the

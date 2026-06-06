@@ -24,7 +24,6 @@ from langchain_openai import OpenAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from api.config import Settings, get_settings
-from ingest.clean import clean_document
 from ingest.loader import build_documents
 
 logger = logging.getLogger(__name__)
@@ -33,11 +32,12 @@ _BATCH_SIZE = 1000  # stay well below the chromadb 5461-record ceiling
 
 
 def build_chunks(docs: list[Document]) -> list[Document]:
-    """Clean → split → prepend contextual header.
+    """Split → prepend contextual header.
 
-    Produces the exact strings that will be passed to the embedder — i.e. the
-    "vector-view" of the corpus.  Public so the smoke-test can reuse this
-    transform to inspect embed inputs without actually calling OpenAI.
+    Documents arrive already clean (body extracted by :mod:`ingest.extract`),
+    so this function only splits and enriches.  Produces the exact strings
+    passed to the embedder — the "vector-view" of the corpus.  Public so the
+    smoke-test can inspect embed inputs without calling OpenAI.
     """
     settings = get_settings()
     splitter = RecursiveCharacterTextSplitter(
@@ -46,8 +46,7 @@ def build_chunks(docs: list[Document]) -> list[Document]:
         add_start_index=True,
     )
 
-    cleaned = [clean_document(d) for d in docs]
-    chunks = splitter.split_documents(cleaned)
+    chunks = splitter.split_documents(docs)
 
     # Prepend contextual header so each chunk is self-describing in embedding space.
     # The header carries title + topic slugs + URL so short/ambiguous chunks are
