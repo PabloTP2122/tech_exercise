@@ -29,7 +29,15 @@ from ingest import clean
 logger = logging.getLogger(__name__)
 
 # Metadata keys every Document must carry.
-_REQUIRED_KEYS = {"source_url", "title", "description", "author", "published_at", "categories"}
+_REQUIRED_KEYS = {
+    "source_url",
+    "title",
+    "description",
+    "author",
+    "published_at",
+    "categories",
+    "content_origin",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -269,6 +277,9 @@ def build_document(url: str, html: str) -> Document:
         "author": fields["author"],
         "published_at": fields["published_at"],
         "categories": categories,
+        # Provenance: marks the body as blog content so the prompt layer can
+        # treat it unambiguously as DATA (injection-resistant scaffolding).
+        "content_origin": "blog_body",
     }
 
     # Validate metadata contract — warn loudly, never silently emit bad data.

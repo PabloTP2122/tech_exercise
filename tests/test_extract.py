@@ -252,3 +252,8 @@ class TestBuildDocument:
         assert "refactored some code for a Bitovi client" in doc.page_content
         assert "facebook.com/tr" not in doc.page_content
         assert "© 2026 Bitovi" not in doc.page_content
+
+    def test_content_origin_is_blog_body(self, sample_html: str) -> None:
+        """Provenance key must be present and set to 'blog_body'."""
+        doc = build_document(_ARTICLE_URL, sample_html)
+        assert doc.metadata.get("content_origin") == "blog_body"

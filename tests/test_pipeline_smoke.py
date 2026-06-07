@@ -36,6 +36,7 @@ _REQUIRED_METADATA_KEYS = {
     "author",
     "published_at",
     "categories",
+    "content_origin",
 }
 
 # Output path for the human-readable fixture (git-ignored via data/ rule).
@@ -188,6 +189,14 @@ def test_single_document_pipeline() -> None:
             f"Expected prefix: {header_prefix!r}\n"
             f"Got start:       {chunk['embedded_text'][:120]!r}"
         )
+        # 9. Every chunk body must be wrapped in data-source delimiters
+        #    (injection-resistant scaffolding from TASK-05G).
+        assert (
+            "<DATA_SOURCE>" in chunk["embedded_text"]
+        ), f"Chunk {i} missing <DATA_SOURCE> delimiter"
+        assert (
+            "</DATA_SOURCE>" in chunk["embedded_text"]
+        ), f"Chunk {i} missing </DATA_SOURCE> delimiter"
 
     # 9. Write local-only fixture for human inspection.
     _FIXTURE_PATH.parent.mkdir(parents=True, exist_ok=True)

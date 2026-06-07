@@ -32,6 +32,7 @@ _METADATA_COLUMNS: list[Column] = [
     Column("author", "TEXT"),
     Column("published_at", "TEXT"),
     Column("description", "TEXT"),
+    Column("content_origin", "TEXT"),
 ]
 # Names only — used by PGVectorStore.create_sync (which takes str, not Column).
 _METADATA_COLUMN_NAMES: list[str] = [c.name for c in _METADATA_COLUMNS]
@@ -42,6 +43,22 @@ _BATCH_SIZE = 1000
 _VECTOR_SIZE = 1536  # text-embedding-3-small output dimension
 
 
+def wrap_as_data(text: str) -> str:
+    """Wrap ``text`` in data-source delimiters for injection-resistant embedding.
+
+    Places the chunk body inside ``<DATA_SOURCE>…</DATA_SOURCE>`` boundaries
+    so downstream generation prompts can treat it unambiguously as DATA, not
+    instructions.  Text is preserved byte-for-byte inside the delimiters.
+
+    Args:
+        text: Chunk body text to wrap.
+
+    Returns:
+        ``"<DATA_SOURCE>\\n{text}\\n</DATA_SOURCE>"``.
+    """
+    return f"<DATA_SOURCE>\n{text}\n</DATA_SOURCE>"
+
+
 def build_chunks(docs: list[Document]) -> list[Document]:
     """Split documents and prepend a contextual header to each chunk.
 
@@ -50,12 +67,24 @@ def build_chunks(docs: list[Document]) -> list[Document]:
     passed to the embedder — the "vector-view" of the corpus.  Public so
     the smoke-test can inspect embed inputs without calling OpenAI.
 
+    Each chunk is formatted as::
+
+        {title} · {categories} · {url}
+
+        <DATA_SOURCE>
+        {body}
+        </DATA_SOURCE>
+
+    The header carries provenance (title, topics, URL) so short or ambiguous
+    chunks are self-describing in embedding space.  The ``<DATA_SOURCE>``
+    wrapper signals the prompt layer to treat the body as DATA, not instructions.
+
     Args:
         docs: Clean documents from :func:`~ingest.loader.build_documents`.
 
     Returns:
-        List of chunk :class:`Document` objects with header-prepended
-        ``page_content`` ready for embedding.
+        List of chunk :class:`Document` objects with header-prepended,
+        delimiter-wrapped ``page_content`` ready for embedding.
     """
     settings = get_settings()
     splitter = RecursiveCharacterTextSplitter(
@@ -75,7 +104,8 @@ def build_chunks(docs: list[Document]) -> list[Document]:
         categories: str = meta.get("categories") or ""
         url: str = meta.get("source_url") or meta.get("source") or ""
         header = f"{title} · {categories} · {url}\n\n"
-        enriched.append(Document(page_content=header + chunk.page_content, metadata=meta))
+        body = wrap_as_data(chunk.page_content)
+        enriched.append(Document(page_content=header + body, metadata=meta))
 
     logger.info(
         "Split %d articles → %d chunks (blog_base_url=%s)",
