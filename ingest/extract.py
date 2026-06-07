@@ -90,8 +90,35 @@ def _ld_url_matches(candidate: dict[str, Any], url: str) -> bool:
     )
 
 
-# Regex for recovering datePublished from raw JSON-LD strings, even malformed ones.
+# Regexes for recovering fields from raw JSON-LD strings, even malformed ones.
 _DATE_PUBLISHED_RE = re.compile(r'"datePublished"\s*:\s*"([^"]+)"')
+# Matches: "author": { ... "name": "Value" ... }  (DOTALL so it spans multiple lines)
+_AUTHOR_NAME_RE = re.compile(r'"author"\s*:\s*\{[^}]*?"name"\s*:\s*"([^"]+)"', re.DOTALL)
+
+
+def _recover_jsonld_field(soup: BeautifulSoup, pattern: re.Pattern[str]) -> str:
+    """Scan all JSON-LD ``<script>`` blocks for the first match of ``pattern``.
+
+    Iterates blocks in document order and returns ``pattern.search(raw).group(1)``
+    for the first matching block, or ``""`` if no block matches.
+
+    This shared helper powers both :func:`_recover_date_published` and
+    :func:`_recover_author` — the scanning logic is identical; only the
+    compiled pattern differs.
+
+    Args:
+        soup: Parsed page soup.
+        pattern: Compiled regex with one capturing group for the desired value.
+
+    Returns:
+        The first captured value across all JSON-LD blocks, or ``""`` if absent.
+    """
+    for script in soup.find_all("script", type="application/ld+json"):
+        raw = script.string or ""
+        match = pattern.search(raw)
+        if match:
+            return match.group(1)
+    return ""
 
 
 def _recover_date_published(soup: BeautifulSoup) -> str:
@@ -117,12 +144,29 @@ def _recover_date_published(soup: BeautifulSoup) -> str:
         The first ``datePublished`` value found in any JSON-LD block, or ``""``
         if none is present.
     """
-    for script in soup.find_all("script", type="application/ld+json"):
-        raw = script.string or ""
-        match = _DATE_PUBLISHED_RE.search(raw)
-        if match:
-            return match.group(1)
-    return ""
+    return _recover_jsonld_field(soup, _DATE_PUBLISHED_RE)
+
+
+def _recover_author(soup: BeautifulSoup) -> str:
+    """Scan all JSON-LD blocks for the ``author.name`` field via regex.
+
+    Used as a fallback when :func:`extract_metadata` returns an empty ``author``.
+    Handles the same failure modes as :func:`_recover_date_published`:
+
+    1. **Malformed JSON-LD**: unescaped ``"`` in ``headline`` causes ``json.loads``
+       to throw and the block is discarded — but the author object is still present
+       in the raw source text.
+    2. **URL-mismatch**: the URL-matched ``BlogPosting`` lacks an ``author`` field
+       while another block on the same page carries it.
+
+    Args:
+        soup: Parsed page soup.
+
+    Returns:
+        The first ``author.name`` value found in any JSON-LD block, or ``""``
+        if none is present.
+    """
+    return _recover_jsonld_field(soup, _AUTHOR_NAME_RE)
 
 
 # ---------------------------------------------------------------------------
@@ -258,13 +302,14 @@ def extract_categories(soup: BeautifulSoup) -> str:
 
     Collects all unique topic slugs in document order and returns them as a
     delimited string ``",slug1,slug2,"``.  If no topic links are found,
-    returns ``","`` (the empty-sentinel value).
+    returns ``""`` (empty string — the article is legitimately untagged).
 
     Args:
         soup: Parsed page soup.
 
     Returns:
-        Delimited categories string, e.g. ``",react,angular,"``.
+        Delimited categories string, e.g. ``",react,angular,"``, or ``""``
+        when no topic links are present.
     """
     slugs: list[str] = []
     for a in soup.find_all("a", href=True):
@@ -274,7 +319,7 @@ def extract_categories(soup: BeautifulSoup) -> str:
         slug = href.rstrip("/").split("/blog/topic/")[-1].strip().lower()
         if slug and slug not in slugs:
             slugs.append(slug)
-    return "," + ",".join(slugs) + "," if slugs else ","
+    return "," + ",".join(slugs) + "," if slugs else ""
 
 
 def build_document(url: str, html: str) -> Document:
@@ -286,7 +331,8 @@ def build_document(url: str, html: str) -> Document:
     2. Extract metadata via :func:`extract_metadata` (BlogPosting → OG → h1).
     3. Extract categories via :func:`extract_categories`.
     4. Clean the article body via :func:`ingest.clean.clean_html`.
-    5. Validate the metadata contract (all 6 keys, non-empty ``categories``).
+    5. Validate the metadata contract (all 7 keys; ``categories`` may be ``""`` for
+       legitimately untagged articles).
 
     The returned ``Document.page_content`` is the clean article body text
     (nav, footer, CTAs, and tracking pixels removed).
@@ -314,8 +360,18 @@ def build_document(url: str, html: str) -> Document:
             logger.info("Recovered datePublished via regex for %s: %s", url, recovered)
             published_at = recovered
 
-    if categories == ",":
-        logger.warning("No topic links found for %s — categories will be empty sentinel", url)
+    # Backfill author when the normal extraction chain returned "".
+    # Same failure modes as the date recovery: malformed JSON-LD blocks and
+    # pages where the URL-matched BlogPosting is missing the author field.
+    author = fields["author"]
+    if not author:
+        recovered_author = _recover_author(soup)
+        if recovered_author:
+            logger.info("Recovered author via regex for %s: %s", url, recovered_author)
+            author = recovered_author
+
+    if not categories:
+        logger.warning("No topic links found for %s — categories empty", url)
 
     # clean_body returns the article Markdown AND the provenance label
     # ("blog_body" when the selector was found; "full_page_fallback" when not).
@@ -325,7 +381,7 @@ def build_document(url: str, html: str) -> Document:
         "source_url": url,
         "title": fields["title"],
         "description": fields["description"],
-        "author": fields["author"],
+        "author": author,
         "published_at": published_at,
         "categories": categories,
         "content_origin": body_result.content_origin,

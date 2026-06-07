@@ -15,7 +15,7 @@ Schema
         description  TEXT NOT NULL DEFAULT '',
         author       TEXT NOT NULL DEFAULT '',
         published_at TIMESTAMPTZ,       -- NULL when date cannot be parsed
-        categories   TEXT NOT NULL DEFAULT ','   -- delimited ",slug,slug,"
+        categories   TEXT NOT NULL DEFAULT ''    -- delimited ",slug,slug,"; "" when untagged
     )
 """
 
@@ -35,7 +35,7 @@ CREATE TABLE IF NOT EXISTS articles (
     description  TEXT NOT NULL DEFAULT '',
     author       TEXT NOT NULL DEFAULT '',
     published_at TIMESTAMPTZ,
-    categories   TEXT NOT NULL DEFAULT ','
+    categories   TEXT NOT NULL DEFAULT ''
 )
 """
 
@@ -116,7 +116,7 @@ def upsert_articles(engine: sa.Engine, docs: list[Document]) -> int:
             "description": doc.metadata.get("description", ""),
             "author": doc.metadata.get("author", ""),
             "published_at": _parse_published_at(doc.metadata.get("published_at", "")),
-            "categories": doc.metadata.get("categories", ","),
+            "categories": doc.metadata.get("categories", ""),
         }
         for doc in docs
     ]

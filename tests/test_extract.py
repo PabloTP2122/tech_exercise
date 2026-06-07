@@ -12,6 +12,7 @@ from bs4 import BeautifulSoup
 
 from ingest.clean import clean_html
 from ingest.extract import (
+    _recover_author,
     _recover_date_published,
     build_document,
     extract_categories,
@@ -178,9 +179,9 @@ class TestExtractCategories:
         assert cats.startswith(",") and cats.endswith(",")
         assert len(cats) > 1
 
-    def test_empty_sentinel_when_no_topic_links(self) -> None:
+    def test_empty_string_when_no_topic_links(self) -> None:
         soup = BeautifulSoup("<html><body><a href='/other'>link</a></body></html>", "lxml")
-        assert extract_categories(soup) == ","
+        assert extract_categories(soup) == ""
 
     def test_deduplication(self) -> None:
         html = """<html><body>
@@ -308,6 +309,29 @@ class TestRecoverDatePublished:
 
 
 # ---------------------------------------------------------------------------
+# _recover_author
+# ---------------------------------------------------------------------------
+
+
+class TestRecoverAuthor:
+    """_recover_author rescues the author name from malformed JSON-LD blocks."""
+
+    def test_recovers_author_from_malformed_json_ld(self) -> None:
+        """Unescaped quotes break json.loads; regex must still find the author name."""
+        soup = BeautifulSoup(_MALFORMED_LD_HTML, "lxml")
+        assert _recover_author(soup) == "Test Author"
+
+    def test_returns_empty_string_when_no_author_present(self) -> None:
+        soup = BeautifulSoup("<html><body></body></html>", "lxml")
+        assert _recover_author(soup) == ""
+
+    def test_return_type_is_str(self) -> None:
+        soup = BeautifulSoup("<html><body></body></html>", "lxml")
+        result = _recover_author(soup)
+        assert isinstance(result, str)
+
+
+# ---------------------------------------------------------------------------
 # build_document — date recovery integration
 # ---------------------------------------------------------------------------
 
@@ -324,6 +348,32 @@ class TestBuildDocumentDateRecovery:
         """URL-matched BlogPosting without datePublished: backfill from the other block."""
         doc = build_document(_SPLIT_DATE_URL, _SPLIT_DATE_HTML)
         assert doc.metadata["published_at"] == "2026-05-28 16:51:37"
+
+
+# ---------------------------------------------------------------------------
+# build_document — author recovery integration
+# ---------------------------------------------------------------------------
+
+
+class TestBuildDocumentAuthorRecovery:
+    """build_document backfills author via _recover_author when extract_metadata returns ''."""
+
+    def test_backfills_author_from_malformed_ld(self) -> None:
+        """Malformed JSON-LD (unescaped quotes) must not leave author empty."""
+        doc = build_document("https://www.bitovi.com/blog/test", _MALFORMED_LD_HTML)
+        assert doc.metadata["author"] == "Test Author"
+
+    def test_no_author_when_truly_absent(self) -> None:
+        """HTML with no JSON-LD at all must yield an empty author (no crash)."""
+        html = (
+            "<html><head>"
+            '<meta property="og:title" content="No Author Article">'
+            "</head><body>"
+            '<div id="hs_cos_wrapper_post_body"><p>Body.</p></div>'
+            "</body></html>"
+        )
+        doc = build_document("https://www.bitovi.com/blog/no-author", html)
+        assert doc.metadata["author"] == ""
 
 
 # ---------------------------------------------------------------------------

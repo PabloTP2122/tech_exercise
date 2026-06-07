@@ -100,9 +100,17 @@ class TestFindProblems:
     def test_clean_record_produces_no_problems(self) -> None:
         assert find_problems([self._clean_record()]) == []
 
-    def test_empty_categories_flagged(self) -> None:
+    def test_empty_categories_sentinel_flagged(self) -> None:
+        """Legacy ',' sentinel must still be flagged (backwards-compatibility)."""
         rec = self._clean_record()
         rec["categories"] = ","
+        problems = find_problems([rec])
+        assert any("EMPTY_CATEGORIES" in p for p in problems)
+
+    def test_empty_string_categories_flagged(self) -> None:
+        """New empty-string '' representation must also be flagged as EMPTY_CATEGORIES."""
+        rec = self._clean_record()
+        rec["categories"] = ""
         problems = find_problems([rec])
         assert any("EMPTY_CATEGORIES" in p for p in problems)
 

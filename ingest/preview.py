@@ -90,7 +90,7 @@ def emulate_vector_view(docs: list[Document]) -> list[dict]:  # type: ignore[typ
                 "description": doc.metadata.get("description", ""),
                 "author": doc.metadata.get("author", ""),
                 "published_at": doc.metadata.get("published_at", ""),
-                "categories": doc.metadata.get("categories", ","),
+                "categories": doc.metadata.get("categories", ""),
                 "content_origin": doc.metadata.get("content_origin", ""),
                 "raw_char_len": raw_len,
                 "clean_char_len": clean_len,
@@ -114,7 +114,7 @@ def find_problems(records: list[dict]) -> list[str]:  # type: ignore[type-arg]
 
     Checks each article record for:
 
-    - Empty ``categories`` (only the ``","`` sentinel) — breaks catalog routes.
+    - Empty or legacy-sentinel ``categories`` (``""`` or ``","``) — breaks catalog routes.
     - Missing or empty ``content_origin`` — injection-scaffolding regression.
     - Any chunk whose ``embedded_text`` is missing ``<DATA_SOURCE>`` or
       ``</DATA_SOURCE>`` delimiters — delimiter regression.
@@ -128,7 +128,8 @@ def find_problems(records: list[dict]) -> list[str]:  # type: ignore[type-arg]
     problems: list[str] = []
     for rec in records:
         url = rec.get("source_url", "<unknown>")
-        if rec.get("categories", ",") == ",":
+        cats = rec.get("categories", "")
+        if not cats or cats == ",":
             problems.append(f"EMPTY_CATEGORIES  {url}")
         if not rec.get("content_origin"):
             problems.append(f"MISSING_CONTENT_ORIGIN  {url}")
