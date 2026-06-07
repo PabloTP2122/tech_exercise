@@ -25,7 +25,7 @@ from pathlib import Path
 import pytest
 from langchain_core.documents import Document
 
-from ingest.load_chroma import build_chunks
+from ingest.load_vectorstore import build_chunks
 from ingest.loader import build_documents, list_article_urls
 
 # Metadata keys every document must carry (from TASK-04 / TASK-05 contract).

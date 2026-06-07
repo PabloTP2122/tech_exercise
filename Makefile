@@ -1,21 +1,27 @@
-.PHONY: install dev ingest load test lint format format-check typecheck check clean help
+.PHONY: install dev db-up db-down ingest load test lint format format-check typecheck check clean help
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
-	| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-14s\033[0m %s\n", $$1, $$2}'
+	| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
 
 install: ## Install deps + pre-commit hooks
 	uv sync --all-extras
 	uv run pre-commit install
 
-dev: ## Start FastAPI dev server on :8000
+db-up: ## Start PostgreSQL + pgvector container (detached)
+	docker compose up -d db
+
+db-down: ## Stop containers (preserves data volume)
+	docker compose down
+
+dev: ## Start FastAPI dev server on :8000  (requires db-up)
 	uv run uvicorn api.main:app --reload --port 8000
 
-ingest: ## Fetch articles -> embed -> load ChromaDB (skips if already populated)
-	uv run python -m ingest.load_chroma
+ingest: ## Fetch articles -> embed -> load pgvector (skips if already populated)
+	uv run python -m ingest.load_vectorstore
 
-load: ## Force rebuild: delete collection + re-embed from scratch
-	uv run python -m ingest.load_chroma --force
+load: ## Force rebuild: drop table + re-embed from scratch
+	uv run python -m ingest.load_vectorstore --force
 
 test: ## Run pytest
 	uv run pytest -v
@@ -34,5 +40,6 @@ typecheck: ## mypy
 
 check: lint format-check typecheck test ## Full quality gate
 
-clean: ## Remove caches and the vector store
-	rm -rf chroma_db/ .mypy_cache/ .ruff_cache/ .pytest_cache/
+clean: ## Remove Python caches + stop containers and wipe DB volume
+	docker compose down -v
+	rm -rf .mypy_cache/ .ruff_cache/ .pytest_cache/
