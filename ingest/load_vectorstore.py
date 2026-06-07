@@ -86,7 +86,6 @@ def build_chunks(docs: list[Document]) -> list[Document]:
         List of chunk :class:`Document` objects with header-prepended,
         delimiter-wrapped ``page_content`` ready for embedding.
     """
-    settings = get_settings()
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=800,
         chunk_overlap=100,
@@ -107,12 +106,7 @@ def build_chunks(docs: list[Document]) -> list[Document]:
         body = wrap_as_data(chunk.page_content)
         enriched.append(Document(page_content=header + body, metadata=meta))
 
-    logger.info(
-        "Split %d articles → %d chunks (blog_base_url=%s)",
-        len(docs),
-        len(enriched),
-        settings.blog_base_url,
-    )
+    logger.info("Split %d articles → %d chunks.", len(docs), len(enriched))
     return enriched
 
 

@@ -1,4 +1,4 @@
-.PHONY: install dev db-up db-down ingest load test lint format format-check typecheck check clean help
+.PHONY: install dev db-up db-down ingest load test lint format format-check typecheck check eyeball eyeball-all preflight clean help
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -25,6 +25,14 @@ load: ## Force rebuild: drop table + re-embed from scratch
 
 test: ## Run pytest
 	uv run pytest -v
+
+eyeball: ## Eyeball 1-doc vector-view: fetch one article, run the pipeline, write test_1.json
+	uv run pytest tests/test_pipeline_smoke.py -v
+
+eyeball-all: ## Full ~431-doc vector-view report (network, ~4 min, no embed/DB)
+	uv run python -m ingest.preview
+
+preflight: check eyeball ## Full quality gate + 1-doc eyeball — run before embedding
 
 lint: ## Ruff lint (check only)
 	uv run ruff check .
