@@ -14,6 +14,7 @@ to avoid silent data-loss; callers should treat this as a data-quality signal.
 """
 
 import logging
+from typing import NamedTuple
 
 from bs4 import BeautifulSoup
 from langchain_core.documents import Document
@@ -24,8 +25,50 @@ logger = logging.getLogger(__name__)
 _BODY_SELECTOR = "#hs_cos_wrapper_post_body"
 
 
+class CleanResult(NamedTuple):
+    """Result of cleaning an HTML page.
+
+    Attributes:
+        text: Cleaned article body as Markdown, or the original HTML if the
+              body selector was absent.
+        content_origin: Provenance label — ``"blog_body"`` when the article-body
+                        selector was found; ``"full_page_fallback"`` when cleaning
+                        fell back to the full page (selector absent).
+    """
+
+    text: str
+    content_origin: str
+
+
+def clean_body(html: str) -> CleanResult:
+    """Return the cleaned article body and its provenance label.
+
+    Extracts ``#hs_cos_wrapper_post_body`` and converts to Markdown,
+    preserving ``<pre>``/``<code>`` as fenced/backtick spans.  If the selector
+    is absent, returns the original HTML labelled ``"full_page_fallback"``.
+
+    Args:
+        html: Raw HTML string as returned by :func:`ingest.fetcher.fetch_html`.
+
+    Returns:
+        :class:`CleanResult` with ``text`` (Markdown or original HTML) and
+        ``content_origin`` (``"blog_body"`` or ``"full_page_fallback"``).
+    """
+    soup = BeautifulSoup(html, "lxml")
+    body = soup.select_one(_BODY_SELECTOR)
+    if body is None:
+        logger.warning("Body selector '%s' not found — using full content", _BODY_SELECTOR)
+        return CleanResult(text=html, content_origin="full_page_fallback")
+    return CleanResult(
+        text=str(markdownify(str(body), heading_style="ATX", strip=["script", "style"])),
+        content_origin="blog_body",
+    )
+
+
 def clean_html(html: str) -> str:
     """Return the clean article-body Markdown from a full Bitovi HTML page.
+
+    Thin wrapper around :func:`clean_body` for backward compatibility.
 
     Extracts only the ``#hs_cos_wrapper_post_body`` element and converts it to
     Markdown, preserving ``<pre>``/``<code>`` as fenced/backtick spans and
@@ -40,18 +83,13 @@ def clean_html(html: str) -> str:
         Cleaned article body as Markdown, or the original ``html`` string if
         the selector is not found.
     """
-    soup = BeautifulSoup(html, "lxml")
-    body = soup.select_one(_BODY_SELECTOR)
-    if body is None:
-        logger.warning("Body selector '%s' not found — using full content", _BODY_SELECTOR)
-        return html
-    return str(markdownify(str(body), heading_style="ATX", strip=["script", "style"]))
+    return clean_body(html).text
 
 
 def clean_document(doc: Document) -> Document:
     """Return a new Document with cleaned ``page_content``, preserving metadata.
 
-    Calls :func:`clean_html` on ``doc.page_content``.  If the article-body
+    Calls :func:`clean_body` on ``doc.page_content``.  If the article-body
     selector is absent, logs a WARNING with the source URL and returns the
     original content unchanged.
 
@@ -62,15 +100,12 @@ def clean_document(doc: Document) -> Document:
     Returns:
         A new ``Document`` with cleaned ``page_content`` and the same metadata.
     """
-    raw = doc.page_content
-    cleaned = clean_html(raw)
-
-    if cleaned == raw:
+    result = clean_body(doc.page_content)
+    if result.content_origin == "full_page_fallback":
         source = doc.metadata.get("source_url") or doc.metadata.get("source", "<unknown>")
         logger.warning(
             "Body selector '%s' not found for %s — using full content",
             _BODY_SELECTOR,
             source,
         )
-
-    return Document(page_content=cleaned, metadata=doc.metadata)
+    return Document(page_content=result.text, metadata=doc.metadata)

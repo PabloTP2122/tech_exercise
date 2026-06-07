@@ -1,6 +1,6 @@
 """Unit tests for ingest/clean.py — Markdown body extraction."""
 
-from ingest.clean import clean_html
+from ingest.clean import clean_body, clean_html
 
 _ARTICLE_HTML = """\
 <html><body>
@@ -54,3 +54,16 @@ def test_fallback_returns_html_unchanged_when_selector_absent() -> None:
     """When the body selector is missing, clean_html returns the input unchanged."""
     result = clean_html(_NO_SELECTOR_HTML)
     assert result == _NO_SELECTOR_HTML
+
+
+def test_clean_body_returns_blog_body_origin_when_selector_present() -> None:
+    """clean_body must report 'blog_body' when the selector is found."""
+    result = clean_body(_ARTICLE_HTML)
+    assert result.content_origin == "blog_body"
+
+
+def test_clean_body_returns_full_page_fallback_origin_when_selector_absent() -> None:
+    """clean_body must report 'full_page_fallback' and return html intact when absent."""
+    result = clean_body(_NO_SELECTOR_HTML)
+    assert result.content_origin == "full_page_fallback"
+    assert result.text == _NO_SELECTOR_HTML

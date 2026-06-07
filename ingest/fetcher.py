@@ -13,6 +13,7 @@ fetch_all(urls, requests_per_second=2)
 import logging
 import time
 from collections.abc import Iterator
+from urllib.parse import urlparse
 
 import requests
 
@@ -20,6 +21,16 @@ logger = logging.getLogger(__name__)
 
 _UA = "Mozilla/5.0 (compatible; company-blog-rag/1.0; +https://github.com)"
 _TIMEOUT = 15
+
+
+class OffSiteRedirectError(requests.RequestException):
+    """Raised when a fetch redirects to a host different from the requested host.
+
+    Inherits from :class:`requests.RequestException` so the existing
+    ``except Exception`` in :func:`fetch_all` catches it and skips the URL.
+    Prevents embedding off-site pages when a Bitovi blog slug is a redirect
+    (e.g. ``/blog/stealjs-script-manager`` → ``https://stealjs.com/``).
+    """
 
 
 def fetch_html(url: str, *, timeout: int = _TIMEOUT) -> str:
@@ -38,6 +49,13 @@ def fetch_html(url: str, *, timeout: int = _TIMEOUT) -> str:
     """
     resp = requests.get(url, headers={"User-Agent": _UA}, timeout=timeout)
     resp.raise_for_status()
+    # Detect off-site redirects (e.g. /blog/stealjs-script-manager → stealjs.com).
+    # requests follows redirects transparently; resp.url reflects the final URL.
+    if urlparse(resp.url).netloc != urlparse(url).netloc:
+        raise OffSiteRedirectError(
+            f"Off-site redirect: {url!r} → {resp.url!r}",
+            response=resp,
+        )
     return resp.text
 
 

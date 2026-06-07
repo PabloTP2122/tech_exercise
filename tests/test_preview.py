@@ -82,13 +82,15 @@ class TestFindProblems:
         """Return a minimal clean record (no problems)."""
         return {
             "source_url": "https://www.bitovi.com/blog/clean",
+            "title": "Clean Article Title",
+            "published_at": "2025-01-01 00:00:00",
             "categories": ",react,",
             "content_origin": "blog_body",
             "chunks": [
                 {
                     "chunk_index": 0,
                     "embedded_text": (
-                        "Title · ,react, · https://www.bitovi.com/blog/clean\n\n"
+                        "Clean Article Title · ,react, · https://www.bitovi.com/blog/clean\n\n"
                         "<DATA_SOURCE>\nBody text.\n</DATA_SOURCE>"
                     ),
                 }
@@ -135,6 +137,30 @@ class TestFindProblems:
         problems = find_problems([rec])
         assert any("EMPTY_CATEGORIES" in p for p in problems)
         assert any("MISSING_CONTENT_ORIGIN" in p for p in problems)
+
+    def test_empty_published_at_flagged(self) -> None:
+        rec = self._clean_record()
+        rec["published_at"] = ""
+        problems = find_problems([rec])
+        assert any("EMPTY_PUBLISHED_AT" in p for p in problems)
+
+    def test_absent_published_at_key_flagged(self) -> None:
+        rec = self._clean_record()
+        del rec["published_at"]
+        problems = find_problems([rec])
+        assert any("EMPTY_PUBLISHED_AT" in p for p in problems)
+
+    def test_empty_title_flagged(self) -> None:
+        rec = self._clean_record()
+        rec["title"] = ""
+        problems = find_problems([rec])
+        assert any("EMPTY_TITLE" in p for p in problems)
+
+    def test_absent_title_key_flagged(self) -> None:
+        rec = self._clean_record()
+        del rec["title"]
+        problems = find_problems([rec])
+        assert any("EMPTY_TITLE" in p for p in problems)
 
     def test_empty_records_list_produces_no_problems(self) -> None:
         assert find_problems([]) == []

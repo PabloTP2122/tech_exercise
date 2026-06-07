@@ -12,6 +12,7 @@ from bs4 import BeautifulSoup
 
 from ingest.clean import clean_html
 from ingest.extract import (
+    _recover_date_published,
     build_document,
     extract_categories,
     extract_metadata,
@@ -220,6 +221,109 @@ class TestCleanHtml:
         plain = "Just some plain text with no HTML structure."
         result = clean_html(plain)
         assert result == plain
+
+
+# ---------------------------------------------------------------------------
+# build_document (integration — offline)
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Fixtures for date-recovery tests (no network)
+# ---------------------------------------------------------------------------
+
+# Malformed JSON-LD: unescaped " inside headline value → json.loads throws,
+# but datePublished is present in the raw block text (single-quoted string so
+# the inner " characters are literal, not Python escapes).
+_MALFORMED_LD_HTML = (
+    "<html><body>\n"
+    '<script type="application/ld+json">\n'
+    "{\n"
+    '  "@type": "BlogPosting",\n'
+    '  "headline": "How to Avoid the "Cannot read properties" Error",\n'
+    '  "datePublished": "2021-12-09 15:57:38",\n'
+    '  "author": {"@type": "Person", "name": "Test Author"}\n'
+    "}\n"
+    "</script>\n"
+    '<div id="hs_cos_wrapper_post_body"><p>Body text here.</p></div>\n'
+    '<a href="https://www.bitovi.com/blog/topic/react">react</a>\n'
+    "</body></html>"
+)
+
+# Two valid BlogPosting blocks: the URL-matched one has no datePublished;
+# the second (no URL match) has datePublished.  Mirrors the config-2026 shape.
+_SPLIT_DATE_URL = "https://www.bitovi.com/blog/test-article"
+_SPLIT_DATE_HTML = """\
+<html><body>
+<script type="application/ld+json">
+{
+  "@type": "BlogPosting",
+  "headline": "Test Article",
+  "url": "https://www.bitovi.com/blog/test-article",
+  "mainEntityOfPage": {
+    "@type": "WebPage",
+    "@id": "https://www.bitovi.com/blog/test-article"
+  }
+}
+</script>
+<script type="application/ld+json">
+{
+  "@type": "BlogPosting",
+  "headline": "Test Article (alternate block)",
+  "datePublished": "2026-05-28 16:51:37"
+}
+</script>
+<div id="hs_cos_wrapper_post_body"><p>Body text here.</p></div>
+<a href="https://www.bitovi.com/blog/topic/angular">angular</a>
+</body></html>
+"""
+
+
+# ---------------------------------------------------------------------------
+# _recover_date_published
+# ---------------------------------------------------------------------------
+
+
+class TestRecoverDatePublished:
+    """_recover_date_published rescues dates from malformed or URL-mismatched blocks."""
+
+    def test_recovers_from_malformed_json_ld(self) -> None:
+        """Unescaped quotes break json.loads; regex must still find the date."""
+        soup = BeautifulSoup(_MALFORMED_LD_HTML, "lxml")
+        assert _recover_date_published(soup) == "2021-12-09 15:57:38"
+
+    def test_recovers_from_non_url_matched_block(self) -> None:
+        """Date in a block that url-matching skipped must be found."""
+        soup = BeautifulSoup(_SPLIT_DATE_HTML, "lxml")
+        assert _recover_date_published(soup) == "2026-05-28 16:51:37"
+
+    def test_returns_empty_string_when_no_date_present(self) -> None:
+        soup = BeautifulSoup("<html><body></body></html>", "lxml")
+        assert _recover_date_published(soup) == ""
+
+    def test_return_type_is_str(self) -> None:
+        soup = BeautifulSoup("<html><body></body></html>", "lxml")
+        result = _recover_date_published(soup)
+        assert isinstance(result, str)
+
+
+# ---------------------------------------------------------------------------
+# build_document — date recovery integration
+# ---------------------------------------------------------------------------
+
+
+class TestBuildDocumentDateRecovery:
+    """build_document backfills published_at via _recover_date_published."""
+
+    def test_backfills_published_at_from_malformed_ld(self) -> None:
+        """Malformed JSON-LD (unescaped quotes) must not leave published_at empty."""
+        doc = build_document("https://www.bitovi.com/blog/test", _MALFORMED_LD_HTML)
+        assert doc.metadata["published_at"] == "2021-12-09 15:57:38"
+
+    def test_backfills_published_at_from_non_url_matched_block(self) -> None:
+        """URL-matched BlogPosting without datePublished: backfill from the other block."""
+        doc = build_document(_SPLIT_DATE_URL, _SPLIT_DATE_HTML)
+        assert doc.metadata["published_at"] == "2026-05-28 16:51:37"
 
 
 # ---------------------------------------------------------------------------

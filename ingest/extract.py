@@ -18,6 +18,7 @@ build_document(url, html)
 
 import json
 import logging
+import re
 from collections.abc import Iterator
 from typing import Any
 
@@ -87,6 +88,41 @@ def _ld_url_matches(candidate: dict[str, Any], url: str) -> bool:
         candidate.get("@id", ""),
         mep_id,
     )
+
+
+# Regex for recovering datePublished from raw JSON-LD strings, even malformed ones.
+_DATE_PUBLISHED_RE = re.compile(r'"datePublished"\s*:\s*"([^"]+)"')
+
+
+def _recover_date_published(soup: BeautifulSoup) -> str:
+    """Scan all JSON-LD blocks for ``datePublished`` via regex.
+
+    Used as a fallback when :func:`extract_metadata` returns an empty
+    ``published_at``.  Handles two distinct failure modes:
+
+    1. **Malformed JSON-LD**: an unescaped ``"`` inside a field value (common
+       in Bitovi's ``headline``) makes ``json.loads`` throw, so the whole block
+       is discarded — but the date string is present in the raw source text.
+    2. **URL-mismatch**: the URL-matched ``BlogPosting`` lacks ``datePublished``
+       while another block on the same page (e.g. a related post or alternate
+       representation) carries it.
+
+    Scans block-by-block in document order and returns the first match, so the
+    primary article's date (typically block 0 or 1) is preferred.
+
+    Args:
+        soup: Parsed page soup.
+
+    Returns:
+        The first ``datePublished`` value found in any JSON-LD block, or ``""``
+        if none is present.
+    """
+    for script in soup.find_all("script", type="application/ld+json"):
+        raw = script.string or ""
+        match = _DATE_PUBLISHED_RE.search(raw)
+        if match:
+            return match.group(1)
+    return ""
 
 
 # ---------------------------------------------------------------------------
@@ -267,19 +303,32 @@ def build_document(url: str, html: str) -> Document:
     fields = extract_metadata(soup, url)
     categories = extract_categories(soup)
 
+    # Backfill published_at when the normal extraction chain returned "".
+    # Covers two cases: (1) malformed JSON-LD blocks json.loads discards;
+    # (2) pages where the URL-matched BlogPosting lacks datePublished but
+    # another block on the page carries it.
+    published_at = fields["published_at"]
+    if not published_at:
+        recovered = _recover_date_published(soup)
+        if recovered:
+            logger.info("Recovered datePublished via regex for %s: %s", url, recovered)
+            published_at = recovered
+
     if categories == ",":
         logger.warning("No topic links found for %s — categories will be empty sentinel", url)
+
+    # clean_body returns the article Markdown AND the provenance label
+    # ("blog_body" when the selector was found; "full_page_fallback" when not).
+    body_result = clean.clean_body(html)
 
     metadata: dict[str, str] = {
         "source_url": url,
         "title": fields["title"],
         "description": fields["description"],
         "author": fields["author"],
-        "published_at": fields["published_at"],
+        "published_at": published_at,
         "categories": categories,
-        # Provenance: marks the body as blog content so the prompt layer can
-        # treat it unambiguously as DATA (injection-resistant scaffolding).
-        "content_origin": "blog_body",
+        "content_origin": body_result.content_origin,
     }
 
     # Validate metadata contract — warn loudly, never silently emit bad data.
@@ -287,5 +336,4 @@ def build_document(url: str, html: str) -> Document:
     if missing:
         logger.error("build_document: missing metadata keys %s for %s", missing, url)
 
-    clean_body = clean.clean_html(html)
-    return Document(page_content=clean_body, metadata=metadata)
+    return Document(page_content=body_result.text, metadata=metadata)

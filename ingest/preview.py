@@ -132,6 +132,10 @@ def find_problems(records: list[dict]) -> list[str]:  # type: ignore[type-arg]
             problems.append(f"EMPTY_CATEGORIES  {url}")
         if not rec.get("content_origin"):
             problems.append(f"MISSING_CONTENT_ORIGIN  {url}")
+        if not rec.get("published_at"):
+            problems.append(f"EMPTY_PUBLISHED_AT  {url}")
+        if not rec.get("title"):
+            problems.append(f"EMPTY_TITLE  {url}")
         for chunk in rec.get("chunks", []):
             text: str = chunk.get("embedded_text", "")
             idx = chunk.get("chunk_index", "?")

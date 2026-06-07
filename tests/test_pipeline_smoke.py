@@ -70,9 +70,9 @@ def test_single_document_pipeline() -> None:
 
     # 4. Categories must be a non-empty delimited string.
     categories: str = doc.metadata.get("categories", "")
-    assert categories.startswith(",") and categories.endswith(
-        ","
-    ), f"categories not properly delimited: {categories!r}"
+    assert categories.startswith(",") and categories.endswith(","), (
+        f"categories not properly delimited: {categories!r}"
+    )
     assert len(categories) > 1, f"categories is empty sentinel only: {categories!r}"
 
     # 5. Build the vector-view (clean → split → header).  No embeddings call.
@@ -81,17 +81,17 @@ def test_single_document_pipeline() -> None:
     record = records[0]
 
     # 6. Cleaning must not inflate content.
-    assert (
-        record["clean_char_len"] <= record["raw_char_len"]
-    ), "clean_char_len > raw_char_len — cleaning is adding content"
+    assert record["clean_char_len"] <= record["raw_char_len"], (
+        "clean_char_len > raw_char_len — cleaning is adding content"
+    )
 
     # 7. At least one chunk must be produced.
     assert record["num_chunks"] >= 1, "No chunks produced from the article"
 
     # 8. content_origin provenance key must be present.
-    assert (
-        record["content_origin"] == "blog_body"
-    ), f"Unexpected content_origin: {record['content_origin']!r}"
+    assert record["content_origin"] == "blog_body", (
+        f"Unexpected content_origin: {record['content_origin']!r}"
+    )
 
     # 9. Every chunk's embedded_text must start with the contextual header
     #    (title · categories · url\n\n …).  This confirms the header was prepended.
@@ -103,12 +103,12 @@ def test_single_document_pipeline() -> None:
             f"Got start:       {chunk['embedded_text'][:120]!r}"
         )
         # 10. Every chunk body must be wrapped in data-source delimiters.
-        assert (
-            "<DATA_SOURCE>" in chunk["embedded_text"]
-        ), f"Chunk {i} missing <DATA_SOURCE> delimiter"
-        assert (
-            "</DATA_SOURCE>" in chunk["embedded_text"]
-        ), f"Chunk {i} missing </DATA_SOURCE> delimiter"
+        assert "<DATA_SOURCE>" in chunk["embedded_text"], (
+            f"Chunk {i} missing <DATA_SOURCE> delimiter"
+        )
+        assert "</DATA_SOURCE>" in chunk["embedded_text"], (
+            f"Chunk {i} missing </DATA_SOURCE> delimiter"
+        )
 
     # 11. Write local-only fixture for human inspection.
     _FIXTURE_PATH.parent.mkdir(parents=True, exist_ok=True)
