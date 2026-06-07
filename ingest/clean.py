@@ -1,8 +1,10 @@
 """Content cleaning for Bitovi blog articles.
 
 Single responsibility: given **raw HTML**, extract only the article body
-(``#hs_cos_wrapper_post_body``) and return clean plain text.  Nav, footer,
-cookie banners, tracking pixels, and related-post blocks are stripped.
+(``#hs_cos_wrapper_post_body``) and return clean **Markdown** text.  Nav,
+footer, cookie banners, tracking pixels, and related-post blocks are stripped.
+Code blocks (``<pre>``/``<code>``) are preserved as fenced/backtick Markdown
+so the embedder receives intact syntax rather than line-shattered plain text.
 
 Called by :func:`ingest.extract.build_document` which supplies raw HTML from
 :mod:`ingest.fetcher`, so the selector always finds its target.
@@ -15,6 +17,7 @@ import logging
 
 from bs4 import BeautifulSoup
 from langchain_core.documents import Document
+from markdownify import markdownify
 
 logger = logging.getLogger(__name__)
 
@@ -22,24 +25,27 @@ _BODY_SELECTOR = "#hs_cos_wrapper_post_body"
 
 
 def clean_html(html: str) -> str:
-    """Return the clean article-body text from a full Bitovi HTML page.
+    """Return the clean article-body Markdown from a full Bitovi HTML page.
 
-    Extracts only the ``#hs_cos_wrapper_post_body`` element, stripping nav,
-    footer, tracking pixels, and related-post blocks.  If the selector is
-    absent the function returns ``html`` unchanged and logs a warning.
+    Extracts only the ``#hs_cos_wrapper_post_body`` element and converts it to
+    Markdown, preserving ``<pre>``/``<code>`` as fenced/backtick spans and
+    ATX-style headings.  Nav, footer, tracking pixels, and related-post blocks
+    are excluded.  If the selector is absent the function returns ``html``
+    unchanged and logs a warning.
 
     Args:
         html: Raw HTML string as returned by :func:`ingest.fetcher.fetch_html`.
 
     Returns:
-        Cleaned article body text, or the original ``html`` string if the
-        selector is not found.
+        Cleaned article body as Markdown, or the original ``html`` string if
+        the selector is not found.
     """
     soup = BeautifulSoup(html, "lxml")
     body = soup.select_one(_BODY_SELECTOR)
     if body is None:
+        logger.warning("Body selector '%s' not found — using full content", _BODY_SELECTOR)
         return html
-    return str(body.get_text(separator="\n", strip=True))
+    return str(markdownify(str(body), heading_style="ATX", strip=["script", "style"]))
 
 
 def clean_document(doc: Document) -> Document:

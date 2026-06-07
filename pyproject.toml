@@ -15,6 +15,7 @@ dependencies = [
     "langgraph",
     "sqlalchemy",
     "psycopg[binary]",
+    "markdownify",
     "beautifulsoup4",
     "lxml",
     "requests",
