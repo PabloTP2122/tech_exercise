@@ -5,7 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     openai_api_key: str
-    blog_base_url: str = "https://www.company.com"
+    blog_base_url: str = "https://www.bitovi.com"
     database_url: str = "postgresql+psycopg://rag:rag@localhost:5432/blog_rag"
     collection_name: str = "chunks"
     llm_model: str = "gpt-4o-mini"

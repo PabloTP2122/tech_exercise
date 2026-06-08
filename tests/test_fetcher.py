@@ -55,6 +55,16 @@ class TestFetchHtml:
             fetch_html("https://example.com/page")
         mock_resp.raise_for_status.assert_called_once()
 
+    def test_apex_to_www_redirect_does_not_raise(self) -> None:
+        """apex → www redirect (same site) must NOT raise OffSiteRedirectError."""
+        mock_resp = _mock_response(
+            text="<html>article</html>",
+            final_url="https://www.bitovi.com/blog/article",
+        )
+        with patch("ingest.fetcher.requests.get", return_value=mock_resp):
+            result = fetch_html("https://bitovi.com/blog/article")
+        assert result == "<html>article</html>"
+
     def test_off_site_redirect_error_is_requests_exception(self) -> None:
         """OffSiteRedirectError must be a subclass of requests.RequestException."""
         assert issubclass(OffSiteRedirectError, requests.RequestException)

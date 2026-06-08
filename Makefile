@@ -1,4 +1,4 @@
-.PHONY: install dev db-up db-down ingest load test lint format format-check typecheck check eyeball eyeball-all preflight clean help
+.PHONY: install dev db-up db-down ingest load test lint format format-check typecheck check eyeball eyeball-all discover-check preflight clean help
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -29,8 +29,11 @@ test: ## Run pytest
 eyeball: ## Eyeball 1-doc vector-view: fetch one article, run the pipeline, write test_1.json
 	uv run pytest tests/test_pipeline_smoke.py -v
 
-eyeball-all: ## Full ~431-doc vector-view report (network, ~4 min, no embed/DB)
+eyeball-all: ## Full ~462-doc vector-view report (network, ~5 min, no embed/DB)
 	uv run python -m ingest.preview
+
+discover-check: ## Live reconcile report: sitemap vs paginator (network, ~2 min, no embed/DB)
+	uv run python -m ingest.discovery
 
 preflight: check eyeball ## Full quality gate + 1-doc eyeball — run before embedding
 

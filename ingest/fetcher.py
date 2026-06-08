@@ -51,7 +51,11 @@ def fetch_html(url: str, *, timeout: int = _TIMEOUT) -> str:
     resp.raise_for_status()
     # Detect off-site redirects (e.g. /blog/stealjs-script-manager → stealjs.com).
     # requests follows redirects transparently; resp.url reflects the final URL.
-    if urlparse(resp.url).netloc != urlparse(url).netloc:
+    # Compare apex domains (strip leading "www.") so that a www ↔ apex redirect
+    # within the same site (bitovi.com → www.bitovi.com) is not treated as off-site.
+    requested_apex = urlparse(url).netloc.removeprefix("www.")
+    final_apex = urlparse(resp.url).netloc.removeprefix("www.")
+    if final_apex != requested_apex:
         raise OffSiteRedirectError(
             f"Off-site redirect: {url!r} → {resp.url!r}",
             response=resp,

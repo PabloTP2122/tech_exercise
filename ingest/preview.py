@@ -7,7 +7,7 @@ embeddings.  The 1-doc smoke target (``make eyeball``) uses
 
 Usage
 -----
-Full corpus (~431 articles, network, ~4 min, no embed):
+Full corpus (~462 articles, network, ~4-5 min, no embed):
     uv run python -m ingest.preview
     uv run python -m ingest.preview --limit 5
     make eyeball-all
@@ -20,8 +20,9 @@ from pathlib import Path
 
 from langchain_core.documents import Document
 
+from ingest.discovery import discover_article_urls
 from ingest.load_vectorstore import build_chunks
-from ingest.loader import build_documents, list_article_urls
+from ingest.loader import build_documents
 
 logger = logging.getLogger(__name__)
 
@@ -156,7 +157,10 @@ def main(limit: int | None = None) -> None:
     """
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
-    urls = list_article_urls()
+    # Use the full union (sitemap + paginator) so the vector-view mirrors exactly
+    # what make load will embed.  strict=False avoids a crash if the paginator
+    # has a transient crawl gap while the sitemap is authoritative.
+    urls = discover_article_urls(strict=False)
     subset = urls[:limit] if limit is not None else urls
     logger.info("Processing %d / %d articles …", len(subset), len(urls))
 
