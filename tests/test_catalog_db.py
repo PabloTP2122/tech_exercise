@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from ingest.catalog_db import _parse_published_at
+from ingest.catalog_db import _parse_published_at, _split_category_slugs
 
 
 class TestParseDatePublishedAt:
@@ -60,3 +60,60 @@ class TestParseDatePublishedAt:
         dt = _parse_published_at(value)
         assert dt is not None, f"Expected a datetime for {value!r}, got None"
         assert dt.tzinfo is not None, f"Expected tz-aware datetime for {value!r}"
+
+
+# ---------------------------------------------------------------------------
+# _split_category_slugs
+# ---------------------------------------------------------------------------
+
+
+class TestSplitCategorySlugs:
+    """_split_category_slugs splits delimited rows and validates each slug."""
+
+    def test_basic_row(self) -> None:
+        assert _split_category_slugs([",ai,devops,"]) == ["ai", "devops"]
+
+    def test_multiple_rows_deduplicated(self) -> None:
+        result = _split_category_slugs([",ai,devops,", ",devops,react,"])
+        assert result == ["ai", "devops", "react"]
+
+    def test_sorted_output(self) -> None:
+        result = _split_category_slugs([",react,ai,devops,"])
+        assert result == ["ai", "devops", "react"]
+
+    def test_empty_input(self) -> None:
+        assert _split_category_slugs([]) == []
+
+    def test_empty_string_row(self) -> None:
+        assert _split_category_slugs([""]) == []
+
+    def test_drops_non_conforming_slug(self) -> None:
+        """Slugs with spaces, special chars, or uppercase are dropped (ADR-0008 S4)."""
+        result = _split_category_slugs([",ai,inject this,"])
+        assert result == ["ai"]
+        assert "inject this" not in result
+
+    def test_drops_slug_with_comma(self) -> None:
+        """A stored slug containing a literal comma must not split into phantom categories."""
+        result = _split_category_slugs([",a,b,"])
+        assert result == ["a", "b"]
+
+    def test_drops_slug_with_percent(self) -> None:
+        result = _split_category_slugs([",ai,a%b,"])
+        assert result == ["ai"]
+
+    def test_drops_slug_with_single_quote(self) -> None:
+        result = _split_category_slugs([",ai,o'reilly,"])
+        assert result == ["ai"]
+
+    def test_drops_uppercase_slug(self) -> None:
+        result = _split_category_slugs([",AI,devops,"])
+        assert result == ["devops"]
+
+    def test_hyphenated_slug_accepted(self) -> None:
+        result = _split_category_slugs([",frontend-engineering,project-management,"])
+        assert result == ["frontend-engineering", "project-management"]
+
+    def test_numbers_in_slug_accepted(self) -> None:
+        result = _split_category_slugs([",web3,angular17,"])
+        assert result == ["angular17", "web3"]

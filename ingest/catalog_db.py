@@ -20,6 +20,7 @@ Schema
 """
 
 import logging
+import re
 from datetime import UTC, datetime
 
 import sqlalchemy as sa
@@ -143,3 +144,82 @@ def get_article_count(engine: sa.Engine) -> int:
             return int(row[0]) if row else 0
     except Exception:
         return 0
+
+
+# ---------------------------------------------------------------------------
+# Slug helpers — used by the TASK-06 classifier and TASK-07/09 SQL routes
+# ---------------------------------------------------------------------------
+
+# ADR-0008 S4: read-time slug validation grammar.
+# Mirrors the ingest-time _SLUG_RE in extract.py — both enforce the same grammar.
+_SLUG_RE = re.compile(r"^[a-z0-9-]+$")
+
+
+def escape_like(s: str) -> str:
+    """Escape PostgreSQL ILIKE metacharacters for use with ``ESCAPE '\\\\'``.
+
+    Escapes ``\\``, ``%``, and ``_`` so a slug value is treated as a literal
+    string, not a wildcard pattern, even when bound as a parameter.
+
+    Required by ADR-0008 S1/S2 for all count/enumeration queries:
+    ``conn.execute(text("... ILIKE :pat ESCAPE '\\\\'"), {"pat": f"%,{escape_like(slug)},%"})``
+
+    Args:
+        s: Raw slug string to sanitize.
+
+    Returns:
+        String with ``\\``, ``%``, ``_`` backslash-escaped.
+    """
+    return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _split_category_slugs(rows: list[str]) -> list[str]:
+    """Split comma-delimited category rows into individual validated slugs.
+
+    Applies ADR-0008 S4 read-time validation: drops any slug that does not
+    match ``^[a-z0-9-]+$`` and logs a WARNING so operators can investigate
+    legacy dirty rows or ingest-time whitelist gaps.
+
+    Args:
+        rows: Raw ``categories`` column values, e.g. ``[",react,angular,", ",devops,"]``.
+
+    Returns:
+        Sorted, deduplicated list of conforming slug strings.
+    """
+    slugs: set[str] = set()
+    for row in rows:
+        for part in row.split(","):
+            s = part.strip()
+            if not s:
+                continue
+            if _SLUG_RE.match(s):
+                slugs.add(s)
+            else:
+                logger.warning("list_category_slugs: dropping non-conforming slug %r", s)
+    return sorted(slugs)
+
+
+def list_category_slugs(engine: sa.Engine) -> list[str]:
+    """Return all distinct, validated category slugs from the articles table.
+
+    Uses a static query (no value interpolation).  Drops any slug not matching
+    ``^[a-z0-9-]+$`` via :func:`_split_category_slugs` (ADR-0008 S4 read-time
+    re-validation).  Returns ``[]`` on any DB error (mirrors :func:`get_article_count`).
+
+    Args:
+        engine: SQLAlchemy sync engine connected to the target database.
+
+    Returns:
+        Sorted list of validated category slugs, or ``[]`` on error.
+    """
+    try:
+        with engine.connect() as conn:
+            rows: list[str] = list(
+                conn.execute(
+                    text("SELECT DISTINCT categories FROM articles WHERE categories <> ''")
+                ).scalars()
+            )
+        return _split_category_slugs(rows)
+    except Exception:
+        logger.exception("list_category_slugs: DB query failed")
+        return []

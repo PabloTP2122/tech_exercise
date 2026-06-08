@@ -95,6 +95,10 @@ _DATE_PUBLISHED_RE = re.compile(r'"datePublished"\s*:\s*"([^"]+)"')
 # Matches: "author": { ... "name": "Value" ... }  (DOTALL so it spans multiple lines)
 _AUTHOR_NAME_RE = re.compile(r'"author"\s*:\s*\{[^}]*?"name"\s*:\s*"([^"]+)"', re.DOTALL)
 
+# ADR-0008 S5: ingest-time slug whitelist — only lowercase alphanumeric + hyphen.
+# All real Bitovi topic slugs already conform; non-conforming slugs are dropped at extraction.
+_SLUG_RE = re.compile(r"^[a-z0-9-]+$")
+
 
 def _recover_jsonld_field(soup: BeautifulSoup, pattern: re.Pattern[str]) -> str:
     """Scan all JSON-LD ``<script>`` blocks for the first match of ``pattern``.
@@ -317,7 +321,12 @@ def extract_categories(soup: BeautifulSoup) -> str:
         if not isinstance(href, str) or "/blog/topic/" not in href:
             continue
         slug = href.rstrip("/").split("/blog/topic/")[-1].strip().lower()
-        if slug and slug not in slugs:
+        if not slug:
+            continue
+        if not _SLUG_RE.match(slug):
+            logger.warning("extract_categories: dropping non-conforming slug %r", slug)
+            continue
+        if slug not in slugs:
             slugs.append(slug)
     return "," + ",".join(slugs) + "," if slugs else ""
 
