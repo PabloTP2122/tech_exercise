@@ -145,7 +145,11 @@ def _resolve_slug_via_llm(question: str, known_slugs: list[str]) -> str | None:
         return None
     try:
         settings = get_settings()
-        llm = ChatOpenAI(model=settings.classifier_model, temperature=0)
+        llm = ChatOpenAI(
+            model=settings.classifier_model,
+            temperature=0,
+            api_key=settings.openai_api_key,  # SecretStr; accepted directly by LangChain
+        )
         structured: Any = llm.with_structured_output(_SlugResult)
 
         # ADR-0008 S3: wrap question so the model treats it as DATA, not instructions.

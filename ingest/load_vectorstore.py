@@ -170,7 +170,10 @@ def _build_vector_store(pg_engine: PGEngine, settings: Settings) -> PGVectorStor
         A :class:`PGVectorStore` ready for :meth:`add_documents` /
         :meth:`similarity_search_with_score`.
     """
-    embeddings = OpenAIEmbeddings(model=settings.embedding_model)
+    embeddings = OpenAIEmbeddings(
+        model=settings.embedding_model,
+        api_key=settings.openai_api_key,  # SecretStr; accepted directly by LangChain
+    )
     return PGVectorStore.create_sync(
         engine=pg_engine,
         embedding_service=embeddings,
