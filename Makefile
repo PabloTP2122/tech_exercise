@@ -1,4 +1,4 @@
-.PHONY: install dev db-up db-down ingest load test lint format format-check typecheck check eyeball eyeball-all discover-check preflight clean help
+.PHONY: install dev db-up db-down ingest load test test-live lint format format-check typecheck check eyeball eyeball-all discover-check preflight clean help
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -25,6 +25,9 @@ load: ## Force rebuild: drop table + re-embed from scratch
 
 test: ## Run pytest
 	uv run pytest -v
+
+test-live: ## Run live network tests (real Bitovi feed)
+	uv run pytest -v -m live
 
 eyeball: ## Eyeball 1-doc vector-view: fetch one article, run the pipeline, write test_1.json
 	uv run pytest tests/test_pipeline_smoke.py -v
