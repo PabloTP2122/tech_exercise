@@ -1,4 +1,4 @@
-.PHONY: install dev db-up db-down ingest load test test-live lint format format-check typecheck check eyeball eyeball-all discover-check preflight clean help
+.PHONY: install dev db-up db-down ingest load test test-live lint format format-check typecheck check eyeball eyeball-all discover-check preflight studio clean help
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -53,6 +53,9 @@ typecheck: ## mypy
 	uv run mypy .
 
 check: lint format-check typecheck test ## Full quality gate
+
+studio: ## Launch LangGraph Studio against the compiled graph (requires db-up + OPENAI_API_KEY)
+	uv run langgraph dev
 
 clean: ## Remove Python caches + stop containers and wipe DB volume
 	docker compose down -v

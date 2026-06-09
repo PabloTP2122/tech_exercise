@@ -1,0 +1,73 @@
+"""Catalog nodes: sql_count and sql_enumerate.
+
+Public API (node factories)
+---------------------------
+make_sql_count_node(engine)     -> Callable[[dict[str, Any]], dict[str, Any]]
+make_sql_enumerate_node(engine) -> Callable[[dict[str, Any]], dict[str, Any]]
+"""
+
+from __future__ import annotations
+
+import logging
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
+
+import sqlalchemy as sa
+from sqlalchemy import text
+
+from agent.prompts import render_count, render_enumeration
+from api.config import get_settings
+from ingest.catalog_db import count_articles_by_slug, get_article_count, list_articles_by_slug
+
+if TYPE_CHECKING:
+    pass
+
+logger = logging.getLogger(__name__)
+
+# Max articles returned by enumerate-all (no slug) to keep response manageable.
+_ENUMERATE_ALL_LIMIT = 50
+
+
+def make_sql_count_node(engine: sa.Engine) -> Callable[[dict[str, Any]], dict[str, Any]]:
+    """Return a sql_count terminal node.
+
+    Every count response includes a reference link so the UI always shows
+    at least one source (brief requirement: "shows reference links").
+    """
+
+    def sql_count(state: dict[str, Any]) -> dict[str, Any]:
+        slug: str | None = state.get("category_slug")
+        n = count_articles_by_slug(engine, slug) if slug else get_article_count(engine)
+        base = get_settings().blog_base_url.rstrip("/")
+        if slug:
+            link: dict[str, str] = {
+                "title": f"All Bitovi articles about {slug}",
+                "url": f"{base}/blog/topic/{slug}/page/1",
+            }
+        else:
+            link = {"title": "Bitovi Blog", "url": f"{base}/blog"}
+        return {"answer": render_count(n, slug), "sources": [link]}
+
+    return sql_count
+
+
+def make_sql_enumerate_node(engine: sa.Engine) -> Callable[[dict[str, Any]], dict[str, Any]]:
+    """Return a sql_enumerate terminal node."""
+
+    def sql_enumerate(state: dict[str, Any]) -> dict[str, Any]:
+        slug: str | None = state.get("category_slug")
+        if slug:
+            rows = list_articles_by_slug(engine, slug)
+        else:
+            # No slug: return recent articles up to limit (avoid unbounded response).
+            with engine.connect() as conn:
+                db_rows = conn.execute(
+                    text(
+                        "SELECT title, source_url FROM articles ORDER BY published_at DESC LIMIT :n"
+                    ),
+                    {"n": _ENUMERATE_ALL_LIMIT},
+                ).fetchall()
+            rows = [{"title": r[0] or "", "url": r[1] or ""} for r in db_rows]
+        return {"answer": render_enumeration(rows), "sources": rows}
+
+    return sql_enumerate

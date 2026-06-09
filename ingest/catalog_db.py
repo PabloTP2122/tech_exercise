@@ -223,3 +223,75 @@ def list_category_slugs(engine: sa.Engine) -> list[str]:
     except Exception:
         logger.exception("list_category_slugs: DB query failed")
         return []
+
+
+# ---------------------------------------------------------------------------
+# Agent runtime helpers — count, enumeration, recency (TASK-09 nodes)
+# ---------------------------------------------------------------------------
+
+
+def count_articles_by_slug(engine: sa.Engine, slug: str) -> int:
+    """Return the number of distinct articles tagged with ``slug``.
+
+    Args:
+        engine: SQLAlchemy sync engine.
+        slug: Validated category slug (``^[a-z0-9-]+$``).
+
+    Returns:
+        Count of distinct ``source_url`` rows whose ``categories`` column
+        contains ``,slug,``.  Returns ``0`` on any error.
+    """
+    pat = f"%,{escape_like(slug)},%"
+    with engine.connect() as conn:
+        row = conn.execute(
+            text(
+                "SELECT COUNT(DISTINCT source_url) FROM articles"
+                " WHERE categories ILIKE :pat ESCAPE '\\\\'"
+            ),
+            {"pat": pat},
+        ).fetchone()
+    return int(row[0]) if row else 0
+
+
+def list_articles_by_slug(engine: sa.Engine, slug: str) -> list[dict[str, str]]:
+    """Return articles tagged with ``slug``, newest first.
+
+    Args:
+        engine: SQLAlchemy sync engine.
+        slug: Validated category slug.
+
+    Returns:
+        List of ``{title, url}`` dicts ordered by ``published_at DESC``.
+    """
+    pat = f"%,{escape_like(slug)},%"
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT title, source_url FROM articles"
+                " WHERE categories ILIKE :pat ESCAPE '\\\\'"
+                " ORDER BY published_at DESC"
+            ),
+            {"pat": pat},
+        ).fetchall()
+    return [{"title": r[0] or "", "url": r[1] or ""} for r in rows]
+
+
+def get_recent_articles(engine: sa.Engine, limit: int = 3) -> list[dict[str, str]]:
+    """Return the most recently published articles.
+
+    Args:
+        engine: SQLAlchemy sync engine.
+        limit: Maximum number of rows to return.
+
+    Returns:
+        List of ``{title, url, published_at}`` dicts ordered newest first.
+    """
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT title, source_url, published_at FROM articles"
+                " ORDER BY published_at DESC LIMIT :n"
+            ),
+            {"n": limit},
+        ).fetchall()
+    return [{"title": r[0] or "", "url": r[1] or "", "published_at": str(r[2] or "")} for r in rows]

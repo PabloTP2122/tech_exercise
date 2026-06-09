@@ -1,0 +1,10 @@
+{
+  "python_version": "3.12",
+  "dependencies": [
+    "."
+  ],
+  "graphs": {
+    "blog_rag": "./agent/graph.py:graph"
+  },
+  "env": ".env"
+}

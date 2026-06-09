@@ -30,6 +30,7 @@ dev = [
     "mypy",
     "pre-commit",
     "types-requests",
+    "langgraph-cli[inmem]",
 ]
 
 [tool.ruff]

@@ -12,7 +12,9 @@ repos:
     hooks:
       - id: mypy
         additional_dependencies:
-          [pydantic, pydantic-settings, fastapi, types-requests, requests, sqlalchemy, langchain-postgres]
+          [pydantic, pydantic-settings, fastapi, types-requests, requests, sqlalchemy,
+           langchain-postgres==0.0.17, langchain-core==1.4.0, langchain-openai==1.2.2,
+           langgraph==1.2.4]
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.6.0
