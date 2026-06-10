@@ -21,7 +21,7 @@ share/python-wheels/
 .installed.cfg
 *.egg
 
-# uv virtual environment 
+# uv virtual environment
 # (uv auto-excludes this internally, but it is best practice to keep it here)
 .venv/
 
@@ -49,6 +49,7 @@ chroma_db/
 data/
 frontend/node_modules/
 frontend/dist/
+!frontend/lib/
 
 #Claude
 .claude
