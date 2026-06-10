@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     classifier_model: str = "gpt-4o-mini"
     embedding_model: str = "text-embedding-3-small"
     similarity_threshold: float = 0.35  # relevance floor (0..1, higher=better); tune via .env
+    cors_allow_origins: str = "http://localhost:3000,http://localhost:4200"
+    # Comma-separated list of allowed CORS origins.  Override at deploy time via env:
+    #   CORS_ALLOW_ORIGINS=https://your-app.vercel.app,http://localhost:3000
 
     model_config = SettingsConfigDict(
         env_file=".env",
