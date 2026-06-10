@@ -7,11 +7,11 @@ Built with FastAPI, LangGraph, pgvector (PostgreSQL), Next.js 16 + Hono + React 
 
 ---
 
-## How this meets the brief
+## How this meets the requirements
 
 | Requirement | Where |
 |---|---|
-| Ingest all Bitovi blog articles | `ingest/` pipeline — `make ingest` fetches, embeds, and loads ~462 articles |
+| Ingest all Bitovi blog articles | `ingest/` pipeline — `make ingest` fetches, embeds, and loads ~462 articles (Real ~460) |
 | RAG-grounded Q&A agent | `agent/` LangGraph StateGraph — 4-type routing; only `semantic_qa` calls the LLM |
 | UI: input field + answer + reference links | `frontend/` Next.js app at `http://localhost:3000` |
 | Demo video (2–5 min) | See **Demo Video** section below |
@@ -227,7 +227,7 @@ section (clean Markdown-rendered answers with no raw timestamps or HTML entities
 
 - **Category slug list is auto-discovered** at classifier startup (`SELECT DISTINCT categories FROM articles`) — no hardcoded list required.
 - **RSS feeds cap at ~10 items per feed** — used as a freshness overlay only; the SQL base covers the full article history.
-- **No conversational memory** — each question is answered independently, by design (brief requirement: memory not necessary).
+- **No conversational memory** — each question is answered independently, by design (requirements: memory not necessary).
 - **No automated RAG evaluation** — RAGAS metrics (faithfulness, context recall, answer relevancy) are the natural next step but not implemented.
 
 ---
@@ -271,5 +271,5 @@ Next.js 16 · Hono · React 19 · SWR · Tailwind v4 · react-markdown
 make check
 ```
 
-Runs ruff (lint), ruff (format check), mypy (strict typing), and pytest (312 tests). The same checks
+Runs ruff (lint), ruff (format check), mypy (strict typing), and pytest (308 tests). The same checks
 run on every commit via pre-commit hooks.
