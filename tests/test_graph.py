@@ -17,6 +17,7 @@ from agent.graph import build_graph
 from agent.nodes.catalog import make_sql_count_node, make_sql_enumerate_node
 from agent.nodes.recency import make_hybrid_recency_node
 from agent.nodes.semantic_qa import (
+    _QAResult,
     make_generate_node,
     make_no_match_node,
     make_relevance_gate_fn,
@@ -145,41 +146,34 @@ class TestNoMatchNode:
 
 
 class TestMakeGenerateNode:
-    def _make_llm(self, content: str = "Generated answer.") -> MagicMock:
-        llm = MagicMock()
-        response = MagicMock()
-        response.content = content
-        llm.invoke.return_value = response
-        return llm
-
     def test_returns_answer(self) -> None:
-        llm = self._make_llm("Answer text.")
+        llm = _make_structured_llm("Answer text.", cited_urls=["https://www.bitovi.com/blog/test"])
         node = make_generate_node(llm)
-        state = _state(docs=[_doc()], scores=[0.9])
-        result = node(state)
+        result = node(_state(docs=[_doc()], scores=[0.9]))
         assert result["answer"] == "Answer text."
 
     def test_sources_extracted_from_docs(self) -> None:
-        llm = self._make_llm()
-        node = make_generate_node(llm)
         doc = _doc("My Article", "https://www.bitovi.com/blog/my-article")
+        llm = _make_structured_llm(cited_urls=["https://www.bitovi.com/blog/my-article"])
+        node = make_generate_node(llm)
         result = node(_state(docs=[doc], scores=[0.9]))
         assert result["sources"] == [
             {"title": "My Article", "url": "https://www.bitovi.com/blog/my-article"}
         ]
 
     def test_doc_without_source_url_excluded_from_sources(self) -> None:
-        llm = self._make_llm()
+        llm = _make_structured_llm()
         node = make_generate_node(llm)
         doc = Document(page_content="content", metadata={"title": "T"})  # no source_url
         result = node(_state(docs=[doc], scores=[0.9]))
         assert result["sources"] == []
 
-    def test_llm_called_once(self) -> None:
-        llm = self._make_llm()
+    def test_structured_output_called_once(self) -> None:
+        llm = _make_structured_llm(cited_urls=["https://www.bitovi.com/blog/test"])
         node = make_generate_node(llm)
         node(_state(docs=[_doc()], scores=[0.9]))
-        llm.invoke.assert_called_once()
+        llm.with_structured_output.assert_called_once()
+        llm.with_structured_output.return_value.invoke.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -354,10 +348,10 @@ def _make_mock_graph() -> Any:
     vs = MagicMock()
     vs.similarity_search_with_relevance_scores.return_value = [(doc, 0.9)]
 
-    llm = MagicMock()
-    response = MagicMock()
-    response.content = "Bitovi recommends Cypress for E2E testing."
-    llm.invoke.return_value = response
+    llm = _make_structured_llm(
+        answer="Bitovi recommends Cypress for E2E testing.",
+        cited_urls=["https://www.bitovi.com/blog/e2e"],
+    )
 
     engine = _mock_engine(count=10, rows=[("Article", "https://www.bitovi.com/blog/art", None)])
 
@@ -367,6 +361,23 @@ def _make_mock_graph() -> Any:
         llm=llm,
         known_slugs=["devops", "ai", "react"],
     ).compile()
+
+
+def _make_structured_llm(
+    answer: str = "Generated answer.",
+    cited_urls: list[str] | None = None,
+) -> MagicMock:
+    """Return a mock LLM with ``with_structured_output`` wired for generate-node tests."""
+    qa_result = _QAResult(answer=answer, cited_urls=cited_urls or [])
+    structured = MagicMock()
+    structured.invoke.return_value = qa_result
+    llm = MagicMock()
+    llm.with_structured_output.return_value = structured
+    # fail-closed fallback path — only reached if with_structured_output().invoke raises
+    response = MagicMock()
+    response.content = answer
+    llm.invoke.return_value = response
+    return llm
 
 
 class TestGraphInvoke:
@@ -408,19 +419,17 @@ class TestGraphInvoke:
         assert result["answer"]
         assert len(result["sources"]) >= 1
 
-    def test_semantic_qa_calls_llm(self) -> None:
-        """LLM invoke should be called for semantic_qa."""
+    def test_semantic_qa_calls_structured_output(self) -> None:
+        """with_structured_output should be called (not plain invoke) for semantic_qa."""
         doc = _doc()
         vs = MagicMock()
         vs.similarity_search_with_relevance_scores.return_value = [(doc, 0.9)]
-        llm = MagicMock()
-        response = MagicMock()
-        response.content = "answer"
-        llm.invoke.return_value = response
+        llm = _make_structured_llm(cited_urls=["https://www.bitovi.com/blog/test"])
         engine = _mock_engine(count=0)
         g: Any = build_graph(engine=engine, vector_store=vs, llm=llm, known_slugs=[]).compile()
         g.invoke({"question": "What is Bitovi?"})
-        llm.invoke.assert_called_once()
+        llm.with_structured_output.assert_called_once()
+        llm.invoke.assert_not_called()
 
     def test_count_does_not_call_llm(self) -> None:
         vs = MagicMock()
@@ -482,15 +491,16 @@ class TestGraphInvoke:
         doc = _doc("Cypress E2E", "https://www.bitovi.com/blog/e2e")
         vs = MagicMock()
         vs.similarity_search_with_relevance_scores.return_value = [(doc, 0.60)]
-        llm = MagicMock()
-        response = MagicMock()
-        response.content = "Cypress is recommended."
-        llm.invoke.return_value = response
+        llm = _make_structured_llm(
+            answer="Cypress is recommended.",
+            cited_urls=["https://www.bitovi.com/blog/e2e"],
+        )
         engine = _mock_engine()
         g: Any = build_graph(engine=engine, vector_store=vs, llm=llm, known_slugs=[]).compile()
         result = g.invoke({"question": "What tools for E2E testing?"})
         assert result["answer"] == "Cypress is recommended."
-        llm.invoke.assert_called_once()
+        llm.with_structured_output.assert_called_once()
+        llm.invoke.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -605,8 +615,6 @@ class TestSqlSecurityEscaping:
 class TestGenerateNodeNoDoubleWrap:
     def test_context_does_not_nest_data_source_tags(self) -> None:
         """Content already has <DATA_SOURCE> from ingest; generate must not re-wrap it."""
-        from agent.nodes.semantic_qa import make_generate_node
-
         wrapped_content = "<DATA_SOURCE>\nSome article text.\n</DATA_SOURCE>"
         doc = Document(
             page_content=wrapped_content,
@@ -614,23 +622,116 @@ class TestGenerateNodeNoDoubleWrap:
         )
 
         captured_prompts: list[str] = []
-        llm = MagicMock()
-        response = MagicMock()
-        response.content = "answer"
 
-        def fake_invoke(messages: Any) -> MagicMock:
+        def fake_structured_invoke(messages: Any) -> _QAResult:
             for m in messages:
                 captured_prompts.append(str(m.content))
-            return response
+            return _QAResult(answer="answer", cited_urls=["https://www.bitovi.com/blog/t"])
 
-        llm.invoke = fake_invoke
+        structured = MagicMock()
+        structured.invoke = fake_structured_invoke
+        llm = MagicMock()
+        llm.with_structured_output.return_value = structured
+
         node = make_generate_node(llm)
         node({"docs": [doc], "scores": [0.9], "question": "test?"})
 
         full_prompt = " ".join(captured_prompts)
-        # Nested: <DATA_SOURCE>...<DATA_SOURCE>  must NOT appear
+        # Nested: <DATA_SOURCE>...<DATA_SOURCE> must NOT appear in the context block
         assert "<DATA_SOURCE>\n<DATA_SOURCE>" not in full_prompt, (
             "double-wrap detected: wrap_as_data called on already-wrapped content"
         )
-        # The original wrapper must still be present (not stripped)
+        # The original context wrapper must still be present (not stripped)
         assert "<DATA_SOURCE>" in full_prompt
+
+
+# ---------------------------------------------------------------------------
+# Generate node — structured-output behaviour (TASK-11S)
+# ---------------------------------------------------------------------------
+
+_URL_A = "https://www.bitovi.com/blog/article-a"
+_URL_B = "https://www.bitovi.com/blog/article-b"
+_URL_FAKE = "https://example.com/not-in-retrieved"
+
+
+class TestGenerateNodeStructuredOutput:
+    """Structured-output whitelist, parity fallback, no-match guard, fail-closed."""
+
+    def _doc_with_url(self, url: str, title: str = "Article") -> Document:
+        return Document(page_content="content", metadata={"title": title, "source_url": url})
+
+    def _node(self, answer: str, cited_urls: list[str], docs: list[Document]) -> dict[str, Any]:
+        llm = _make_structured_llm(answer=answer, cited_urls=cited_urls)
+        return make_generate_node(llm)(_state(docs=docs, scores=[0.9]))
+
+    def test_subset_citation(self) -> None:
+        """Model cites 1 of 2 retrieved URLs → sources contain only that URL."""
+        docs = [self._doc_with_url(_URL_A, "A"), self._doc_with_url(_URL_B, "B")]
+        result = self._node("Answer.", [_URL_A], docs)
+        assert result["sources"] == [{"title": "A", "url": _URL_A}]
+
+    def test_out_of_set_url_dropped(self) -> None:
+        """URL not in the retrieved set is discarded; parity fallback provides the real source."""
+        docs = [self._doc_with_url(_URL_A, "A")]
+        result = self._node("Answer.", [_URL_FAKE], docs)
+        # _URL_FAKE is not in whitelist → dropped; parity fallback uses _URL_A
+        assert result["sources"] == [{"title": "A", "url": _URL_A}]
+        for src in result["sources"]:
+            assert src["url"] != _URL_FAKE
+
+    def test_empty_cited_urls_triggers_parity_fallback(self) -> None:
+        """Empty cited_urls with a real answer → all retrieved docs become sources."""
+        docs = [self._doc_with_url(_URL_A, "A"), self._doc_with_url(_URL_B, "B")]
+        result = self._node("Answer.", [], docs)
+        urls = {s["url"] for s in result["sources"]}
+        assert urls == {_URL_A, _URL_B}
+
+    def test_no_match_response_returns_empty_sources(self) -> None:
+        """Canonical no-match answer must produce sources=[] regardless of cited_urls."""
+        docs = [self._doc_with_url(_URL_A, "A")]
+        result = self._node(NO_MATCH_RESPONSE, [_URL_A], docs)
+        assert result["sources"] == []
+        assert result["answer"].strip() == NO_MATCH_RESPONSE
+
+    def test_fail_closed_on_structured_output_error(self) -> None:
+        """structured.invoke raising → fall back to plain llm.invoke; sources = all retrieved."""
+        doc = self._doc_with_url(_URL_A, "Fallback Article")
+        structured = MagicMock()
+        structured.invoke.side_effect = RuntimeError("parse error")
+        llm = MagicMock()
+        llm.with_structured_output.return_value = structured
+        response = MagicMock()
+        response.content = "fallback answer"
+        llm.invoke.return_value = response
+
+        result = make_generate_node(llm)(_state(docs=[doc], scores=[0.9]))
+        assert result["answer"] == "fallback answer"
+        assert result["sources"] == [{"title": "Fallback Article", "url": _URL_A}]
+        llm.invoke.assert_called_once()
+
+    def test_url_not_in_answer_prose(self) -> None:
+        """Regression: no http-scheme URL should appear inside the answer string."""
+        docs = [self._doc_with_url(_URL_A, "A")]
+        result = self._node("Bitovi is a consulting firm.", [_URL_A], docs)
+        assert "http" not in result["answer"]
+
+    def test_question_is_wrapped_in_prompt(self) -> None:
+        """The user question must be wrapped in <DATA_SOURCE> before prompt interpolation."""
+        captured: list[str] = []
+
+        def fake_structured_invoke(messages: Any) -> _QAResult:
+            for m in messages:
+                captured.append(str(m.content))
+            return _QAResult(answer="Answer.", cited_urls=[_URL_A])
+
+        structured = MagicMock()
+        structured.invoke = fake_structured_invoke
+        llm = MagicMock()
+        llm.with_structured_output.return_value = structured
+
+        doc = self._doc_with_url(_URL_A, "A")
+        make_generate_node(llm)(_state(docs=[doc], question="What is Bitovi?", scores=[0.9]))
+
+        full_prompt = " ".join(captured)
+        assert "<DATA_SOURCE>" in full_prompt
+        assert "What is Bitovi?" in full_prompt

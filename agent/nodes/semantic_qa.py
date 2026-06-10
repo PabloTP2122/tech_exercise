@@ -14,8 +14,10 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from langchain_core.messages import SystemMessage
+from pydantic import BaseModel
 
 from agent.prompts import NO_MATCH_RESPONSE, SEMANTIC_QA_SYSTEM_PROMPT
+from ingest.load_vectorstore import wrap_as_data
 
 if TYPE_CHECKING:
     from langchain_core.documents import Document
@@ -24,6 +26,13 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+
+class _QAResult(BaseModel):
+    """Structured-output schema for the semantic-QA generate node."""
+
+    answer: str
+    cited_urls: list[str] = []
 
 
 def make_retrieve_node(vector_store: PGVectorStore) -> Callable[[dict[str, Any]], dict[str, Any]]:
@@ -81,19 +90,34 @@ def make_generate_node(llm: ChatOpenAI) -> Callable[[dict[str, Any]], dict[str, 
     def generate(state: dict[str, Any]) -> dict[str, Any]:
         docs: list[Document] = state.get("docs", [])
         context = "\n\n".join(doc.page_content for doc in docs)
-        prompt = SEMANTIC_QA_SYSTEM_PROMPT.format(
-            question=state["question"],
-            context=context,
-        )
-        response = llm.invoke([SystemMessage(content=prompt)])
-        sources = [
-            {
-                "title": doc.metadata.get("title", ""),
-                "url": doc.metadata.get("source_url", ""),
-            }
+        # ADR-0008: {source_url: title} whitelist; context already wrapped at ingest.
+        whitelist: dict[str, str] = {
+            doc.metadata["source_url"]: doc.metadata.get("title", "")
             for doc in docs
             if doc.metadata.get("source_url")
-        ]
-        return {"answer": str(response.content), "sources": sources}
+        }
+        # ADR-0008: wrap the question so the model treats it as DATA, not instructions.
+        prompt = SEMANTIC_QA_SYSTEM_PROMPT.format(
+            question=wrap_as_data(state["question"]),
+            context=context,
+        )
+        try:
+            structured: Any = llm.with_structured_output(_QAResult)
+            result: _QAResult = structured.invoke([SystemMessage(content=prompt)])
+        except Exception:
+            logger.warning("structured output failed; falling back to plain invoke")
+            response = llm.invoke([SystemMessage(content=prompt)])
+            sources = [{"title": t, "url": u} for u, t in whitelist.items()]
+            return {"answer": str(response.content), "sources": sources}
+        # No-match guard: no sources for the canonical no-match sentence.
+        if result.answer.strip() == NO_MATCH_RESPONSE:
+            return {"answer": result.answer, "sources": []}
+        # Whitelist filter: drop any URL the model invented that isn't in retrieved docs.
+        cited = [u for u in result.cited_urls if u in whitelist]
+        # Parity fallback: guarantee ≥1 source (reference-link-parity rule, Deviation #15).
+        if not cited:
+            cited = list(whitelist)
+        sources = [{"title": whitelist[u], "url": u} for u in cited]
+        return {"answer": result.answer, "sources": sources}
 
     return generate
