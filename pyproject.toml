@@ -26,6 +26,7 @@ dependencies = [
 dev = [
     "pytest",
     "pytest-asyncio",
+    "httpx2",
     "ruff",
     "mypy",
     "pre-commit",
@@ -52,5 +53,8 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-markers = ["live: hits the network / real Bitovi feed (deselected by default)"]
-addopts = "-m 'not live'"
+markers = [
+    "live: hits the network / real Bitovi feed (deselected by default)",
+    "api_live: hits the live DB for API integration tests (deselected by default)",
+]
+addopts = "-m 'not live and not api_live'"
