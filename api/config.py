@@ -1,6 +1,6 @@
 from functools import lru_cache
 
-from pydantic import SecretStr
+from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -8,6 +8,14 @@ class Settings(BaseSettings):
     openai_api_key: SecretStr
     blog_base_url: str = "https://www.bitovi.com"
     database_url: str = "postgresql+psycopg://rag:rag@localhost:5432/blog_rag"
+
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def normalize_db_scheme(cls, v: object) -> object:
+        if isinstance(v, str) and v.startswith("postgres://"):
+            return "postgresql+psycopg://" + v[len("postgres://") :]
+        return v
+
     collection_name: str = "chunks"
     llm_model: str = "gpt-4o-mini"
     classifier_model: str = "gpt-4o-mini"

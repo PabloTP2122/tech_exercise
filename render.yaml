@@ -9,9 +9,9 @@ services:
       - key: OPENAI_API_KEY
         sync: false          # set manually in Render dashboard (secret)
       - key: DATABASE_URL
-        sync: false          # set manually — copy internal URL from managed DB below,
-                             # then change scheme: postgres:// → postgresql+psycopg://
-                             # See spec/deploy/render.md Gotcha #2
+        fromDatabase:
+          name: bitovi-blog-rag-db
+          property: connectionString  # auto-wired; scheme normalized in api/config.py
 
 databases:
   - name: bitovi-blog-rag-db
