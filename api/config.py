@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     llm_model: str = "gpt-4o-mini"
     classifier_model: str = "gpt-4o-mini"
     embedding_model: str = "text-embedding-3-small"
-    similarity_threshold: float = 0.75
+    similarity_threshold: float = 0.35  # relevance floor (0..1, higher=better); tune via .env
 
     model_config = SettingsConfigDict(
         env_file=".env",

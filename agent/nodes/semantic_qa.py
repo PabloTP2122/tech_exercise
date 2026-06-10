@@ -16,7 +16,6 @@ from typing import TYPE_CHECKING, Any
 from langchain_core.messages import SystemMessage
 
 from agent.prompts import NO_MATCH_RESPONSE, SEMANTIC_QA_SYSTEM_PROMPT
-from ingest.load_vectorstore import wrap_as_data
 
 if TYPE_CHECKING:
     from langchain_core.documents import Document
@@ -31,8 +30,8 @@ def make_retrieve_node(vector_store: PGVectorStore) -> Callable[[dict[str, Any]]
     """Return a retrieve node that fetches docs + cosine scores from pgvector."""
 
     def retrieve(state: dict[str, Any]) -> dict[str, Any]:
-        results: list[tuple[Document, float]] = vector_store.similarity_search_with_score(
-            state["question"], k=4
+        results: list[tuple[Document, float]] = (
+            vector_store.similarity_search_with_relevance_scores(state["question"], k=4)
         )
         if results:
             docs, scores = zip(*results, strict=False)
@@ -56,6 +55,7 @@ def make_relevance_gate_fn(
 
     def relevance_gate(state: dict[str, Any]) -> str:
         scores: list[float] = state.get("scores", [])
+        logger.debug("relevance scores=%s threshold=%.2f", scores, threshold)
         if scores and max(scores) >= threshold:
             return "generate"
         return "no_match"
@@ -80,7 +80,7 @@ def make_generate_node(llm: ChatOpenAI) -> Callable[[dict[str, Any]], dict[str, 
 
     def generate(state: dict[str, Any]) -> dict[str, Any]:
         docs: list[Document] = state.get("docs", [])
-        context = "\n\n".join(wrap_as_data(doc.page_content) for doc in docs)
+        context = "\n\n".join(doc.page_content for doc in docs)
         prompt = SEMANTIC_QA_SYSTEM_PROMPT.format(
             question=state["question"],
             context=context,

@@ -180,7 +180,14 @@ def build_graph(
 
 
 # Module-level compiled graph — loaded by langgraph.json for Studio.
-graph = build_graph().compile()
+# Wrapped in try/except so importing this module (e.g. in tests or offline tools)
+# doesn't crash when the DB is unavailable. Tests always call build_graph() directly
+# with injected mocks and never use this module-level instance.
+try:
+    graph = build_graph().compile()
+except Exception as _err:  # noqa: BLE001
+    logger.warning("agent.graph: module-level graph unavailable (%s) — use build_graph()", _err)
+    graph = None  # type: ignore[assignment]
 
 
 # ---------------------------------------------------------------------------

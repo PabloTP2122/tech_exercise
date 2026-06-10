@@ -77,7 +77,7 @@ class TestMakeRetrieveNode:
     def test_returns_docs_and_scores(self) -> None:
         doc = _doc()
         vs = MagicMock()
-        vs.similarity_search_with_score.return_value = [(doc, 0.9)]
+        vs.similarity_search_with_relevance_scores.return_value = [(doc, 0.9)]
         node = make_retrieve_node(vs)
         result = node(_state())
         assert result["docs"] == [doc]
@@ -85,7 +85,7 @@ class TestMakeRetrieveNode:
 
     def test_empty_results(self) -> None:
         vs = MagicMock()
-        vs.similarity_search_with_score.return_value = []
+        vs.similarity_search_with_relevance_scores.return_value = []
         node = make_retrieve_node(vs)
         result = node(_state())
         assert result["docs"] == []
@@ -93,10 +93,10 @@ class TestMakeRetrieveNode:
 
     def test_passes_question_to_vector_store(self) -> None:
         vs = MagicMock()
-        vs.similarity_search_with_score.return_value = []
+        vs.similarity_search_with_relevance_scores.return_value = []
         node = make_retrieve_node(vs)
         node(_state(question="E2E testing tools"))
-        vs.similarity_search_with_score.assert_called_once_with("E2E testing tools", k=4)
+        vs.similarity_search_with_relevance_scores.assert_called_once_with("E2E testing tools", k=4)
 
 
 # ---------------------------------------------------------------------------
@@ -352,7 +352,7 @@ def _make_mock_graph() -> Any:
     doc = _doc("E2E Article", "https://www.bitovi.com/blog/e2e")
 
     vs = MagicMock()
-    vs.similarity_search_with_score.return_value = [(doc, 0.9)]
+    vs.similarity_search_with_relevance_scores.return_value = [(doc, 0.9)]
 
     llm = MagicMock()
     response = MagicMock()
@@ -412,7 +412,7 @@ class TestGraphInvoke:
         """LLM invoke should be called for semantic_qa."""
         doc = _doc()
         vs = MagicMock()
-        vs.similarity_search_with_score.return_value = [(doc, 0.9)]
+        vs.similarity_search_with_relevance_scores.return_value = [(doc, 0.9)]
         llm = MagicMock()
         response = MagicMock()
         response.content = "answer"
@@ -465,10 +465,10 @@ class TestGraphInvoke:
                     assert "url" in src, f"Missing 'url' in source: {src}"
 
     def test_relevance_gate_no_match(self) -> None:
-        """Low cosine score → NO_MATCH_RESPONSE, sources=[]."""
+        """Low relevance score (< threshold=0.35) → NO_MATCH_RESPONSE, sources=[]."""
         doc = _doc()
         vs = MagicMock()
-        vs.similarity_search_with_score.return_value = [(doc, 0.3)]  # below 0.75
+        vs.similarity_search_with_relevance_scores.return_value = [(doc, 0.20)]  # below 0.35
         llm = MagicMock()
         engine = _mock_engine()
         g: Any = build_graph(engine=engine, vector_store=vs, llm=llm, known_slugs=[]).compile()
@@ -476,6 +476,21 @@ class TestGraphInvoke:
         assert result["answer"] == NO_MATCH_RESPONSE
         assert result["sources"] == []
         llm.invoke.assert_not_called()
+
+    def test_relevance_gate_strong_match_routes_to_generate(self) -> None:
+        """Relevance ≈0.60 (typical on-topic match) must reach generate, not no_match."""
+        doc = _doc("Cypress E2E", "https://www.bitovi.com/blog/e2e")
+        vs = MagicMock()
+        vs.similarity_search_with_relevance_scores.return_value = [(doc, 0.60)]
+        llm = MagicMock()
+        response = MagicMock()
+        response.content = "Cypress is recommended."
+        llm.invoke.return_value = response
+        engine = _mock_engine()
+        g: Any = build_graph(engine=engine, vector_store=vs, llm=llm, known_slugs=[]).compile()
+        result = g.invoke({"question": "What tools for E2E testing?"})
+        assert result["answer"] == "Cypress is recommended."
+        llm.invoke.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -508,6 +523,30 @@ class TestSqlSecurityEscaping:
         fn(engine, slug)
         assert captured, "No params were captured — execute was not called with params"
         return str(captured[0].get("pat", ""))
+
+    def _capture_sql_text(self, fn: Any, slug: str) -> str:
+        """Capture the rendered SQL string passed to conn.execute."""
+        captured_sql: list[str] = []
+
+        conn = MagicMock()
+        result = MagicMock()
+        result.fetchone.return_value = (0,)
+        result.fetchall.return_value = []
+
+        def capture_execute(stmt: Any, params: Any = None) -> MagicMock:
+            captured_sql.append(str(stmt))
+            return result
+
+        conn.__enter__ = MagicMock(return_value=conn)
+        conn.__exit__ = MagicMock(return_value=False)
+        conn.execute = capture_execute
+
+        engine = MagicMock(spec=sa.Engine)
+        engine.connect.return_value = conn
+
+        fn(engine, slug)
+        assert captured_sql, "execute was not called"
+        return captured_sql[0]
 
     def test_count_percent_in_slug_escaped(self) -> None:
         pat = self._capture_pattern(count_articles_by_slug, "a%")
@@ -544,3 +583,54 @@ class TestSqlSecurityEscaping:
 
     def test_escape_like_underscore(self) -> None:
         assert escape_like("a_b") == "a\\_b"
+
+    def test_count_escape_clause_is_single_backslash(self) -> None:
+        """ESCAPE clause must be exactly one backslash; two backslashes crash Postgres."""
+        sql = self._capture_sql_text(count_articles_by_slug, "devops")
+        assert "ESCAPE '\\'" in sql, f"Expected single-backslash ESCAPE in: {sql!r}"
+        assert "ESCAPE '\\\\'" not in sql, f"Found 2-char ESCAPE (arity bug) in: {sql!r}"
+
+    def test_list_escape_clause_is_single_backslash(self) -> None:
+        """Same arity check for list_articles_by_slug."""
+        sql = self._capture_sql_text(list_articles_by_slug, "devops")
+        assert "ESCAPE '\\'" in sql, f"Expected single-backslash ESCAPE in: {sql!r}"
+        assert "ESCAPE '\\\\'" not in sql, f"Found 2-char ESCAPE (arity bug) in: {sql!r}"
+
+
+# ---------------------------------------------------------------------------
+# Generate node — no double-wrap of DATA_SOURCE delimiters
+# ---------------------------------------------------------------------------
+
+
+class TestGenerateNodeNoDoubleWrap:
+    def test_context_does_not_nest_data_source_tags(self) -> None:
+        """Content already has <DATA_SOURCE> from ingest; generate must not re-wrap it."""
+        from agent.nodes.semantic_qa import make_generate_node
+
+        wrapped_content = "<DATA_SOURCE>\nSome article text.\n</DATA_SOURCE>"
+        doc = Document(
+            page_content=wrapped_content,
+            metadata={"title": "Test", "source_url": "https://www.bitovi.com/blog/t"},
+        )
+
+        captured_prompts: list[str] = []
+        llm = MagicMock()
+        response = MagicMock()
+        response.content = "answer"
+
+        def fake_invoke(messages: Any) -> MagicMock:
+            for m in messages:
+                captured_prompts.append(str(m.content))
+            return response
+
+        llm.invoke = fake_invoke
+        node = make_generate_node(llm)
+        node({"docs": [doc], "scores": [0.9], "question": "test?"})
+
+        full_prompt = " ".join(captured_prompts)
+        # Nested: <DATA_SOURCE>...<DATA_SOURCE>  must NOT appear
+        assert "<DATA_SOURCE>\n<DATA_SOURCE>" not in full_prompt, (
+            "double-wrap detected: wrap_as_data called on already-wrapped content"
+        )
+        # The original wrapper must still be present (not stripped)
+        assert "<DATA_SOURCE>" in full_prompt

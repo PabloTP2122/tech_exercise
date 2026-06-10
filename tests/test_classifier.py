@@ -116,6 +116,32 @@ class TestFuzzySlug:
     def test_empty_question_returns_none(self) -> None:
         assert _fuzzy_slug("", _SLUGS) is None
 
+    # --- Stopword / spurious-slug regression tests (Deviation #16) ---
+
+    def test_about_preposition_not_matched_when_about_is_a_slug(self) -> None:
+        """'about' as an English preposition must not match the 'about' topic slug."""
+        slugs = ["about", "ai", "devops"]
+        assert _fuzzy_slug("articles about AI", slugs) == "ai"
+
+    def test_ai_wins_over_about_when_both_present(self) -> None:
+        """'ai' (longer specific slug) must beat 'about' when both whole-word match."""
+        slugs = ["about", "ai", "devops"]
+        result = _fuzzy_slug("How many articles about AI?", slugs)
+        assert result == "ai", f"Expected 'ai' but got {result!r}"
+
+    def test_donejs_not_matched_from_does_stopword(self) -> None:
+        """'does' (4 chars) must not fuzzy-match 'donejs' (6 chars) — length-ratio guard."""
+        assert _fuzzy_slug("What tools for E2E testing?", ["donejs", "react"]) is None
+
+    def test_does_stopword_not_matched_directly(self) -> None:
+        """'does' is a stopword; Pass-2 must skip it regardless of slug list."""
+        assert _fuzzy_slug("does Bitovi cover X?", ["donejs"]) is None
+
+    def test_short_token_below_min_length_not_matched(self) -> None:
+        """Tokens shorter than 4 chars are skipped in Pass-2."""
+        assert _fuzzy_slug("the ai", ["ai"]) == "ai"  # Pass-1 matches 'ai' fine
+        assert _fuzzy_slug("e2e", ["e2e-testing"]) is None  # short + ratio fails
+
 
 # ---------------------------------------------------------------------------
 # _resolve_slug_via_llm — internal behaviour
@@ -263,3 +289,26 @@ class TestClassify:
         result = classify("What is Angular?", known_slugs=[])
         assert isinstance(result, QueryClassification)
         assert result.query_type in {"semantic_qa", "enumeration", "count", "recency"}
+
+    # --- Stopword / spurious-slug regression (Deviation #16) ---
+
+    def test_count_about_ai_extracts_ai_not_about(self) -> None:
+        """Real corpus has an 'about' slug; preposition must not shadow the 'ai' topic."""
+        result = classify("How many articles about AI?", known_slugs=["about", "ai", "devops"])
+        assert result.query_type == "count"
+        assert result.category_slug == "ai", (
+            f"Expected 'ai' but got {result.category_slug!r} — "
+            "'about' stopword guard may be missing"
+        )
+
+    def test_semantic_qa_e2e_no_donejs_slug(self) -> None:
+        """'does' stopword must not fuzzy-match 'donejs'; semantic_qa slug should be None."""
+        result = classify(
+            "What tools does the blog recommend for E2E testing?",
+            known_slugs=["donejs", "react", "angular", "devops"],
+        )
+        assert result.query_type == "semantic_qa"
+        assert result.category_slug is None, (
+            f"Expected None but got {result.category_slug!r} — "
+            "difflib stopword/length-ratio guard may be missing"
+        )

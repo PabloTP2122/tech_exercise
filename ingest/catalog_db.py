@@ -156,13 +156,13 @@ _SLUG_RE = re.compile(r"^[a-z0-9-]+$")
 
 
 def escape_like(s: str) -> str:
-    """Escape PostgreSQL ILIKE metacharacters for use with ``ESCAPE '\\\\'``.
+    """Escape PostgreSQL ILIKE metacharacters for use with ``ESCAPE '\\'``.
 
     Escapes ``\\``, ``%``, and ``_`` so a slug value is treated as a literal
     string, not a wildcard pattern, even when bound as a parameter.
 
     Required by ADR-0008 S1/S2 for all count/enumeration queries:
-    ``conn.execute(text("... ILIKE :pat ESCAPE '\\\\'"), {"pat": f"%,{escape_like(slug)},%"})``
+    ``conn.execute(text("... ILIKE :pat ESCAPE '\\'"), {"pat": f"%,{escape_like(slug)},%"})``
 
     Args:
         s: Raw slug string to sanitize.
@@ -246,7 +246,7 @@ def count_articles_by_slug(engine: sa.Engine, slug: str) -> int:
         row = conn.execute(
             text(
                 "SELECT COUNT(DISTINCT source_url) FROM articles"
-                " WHERE categories ILIKE :pat ESCAPE '\\\\'"
+                " WHERE categories ILIKE :pat ESCAPE '\\'"
             ),
             {"pat": pat},
         ).fetchone()
@@ -268,7 +268,7 @@ def list_articles_by_slug(engine: sa.Engine, slug: str) -> list[dict[str, str]]:
         rows = conn.execute(
             text(
                 "SELECT title, source_url FROM articles"
-                " WHERE categories ILIKE :pat ESCAPE '\\\\'"
+                " WHERE categories ILIKE :pat ESCAPE '\\'"
                 " ORDER BY published_at DESC"
             ),
             {"pat": pat},

@@ -31,6 +31,30 @@ QueryType = Literal["semantic_qa", "enumeration", "count", "recency"]
 # ADR-0008 S6: max chars passed to the LLM fallback (deterministic steps run on full question).
 _QUESTION_MAX_LEN = 500
 
+# Slugs that are also common English words and must never be matched by the fuzzy pass alone.
+# Without this guard, "about" (a real topic slug) matches the preposition in "articles about AI",
+# and Pass-2 difflib matches stopword "does" to "donejs" at cutoff 0.8.
+_STOPWORD_SLUGS: frozenset[str] = frozenset(
+    {
+        "about",
+        "blog",
+        "all",
+        "does",
+        "what",
+        "how",
+        "the",
+        "is",
+        "are",
+        "post",
+        "posts",
+        "article",
+        "articles",
+        "any",
+        "with",
+        "for",
+    }
+)
+
 # Ordered regex rules — first match wins; default is semantic_qa.
 _REGEX_RULES: list[tuple[re.Pattern[str], QueryType]] = [
     (re.compile(r"\b(how many|number of|count)\b", re.IGNORECASE), "count"),
@@ -81,9 +105,12 @@ def _fuzzy_slug(q: str, known_slugs: list[str]) -> str | None:
 
     Two-pass strategy:
 
-    1. Substring / whole-word match (case-insensitive, hyphen-expanded) — handles
-       multiword slugs like ``project-management`` and ``frontend-engineering``.
-    2. ``difflib.get_close_matches`` (cutoff 0.8) against individual tokens in ``q``.
+    1. Whole-word match (case-insensitive, hyphen-expanded) against non-stopword slugs.
+       Collects ALL matches, returns the **longest** (most specific) to avoid common-word
+       slugs like ``about`` masking ``ai`` via alphabetical ordering.
+    2. ``difflib.get_close_matches`` (cutoff 0.85) against individual tokens in ``q``,
+       with min-length (≥4) and length-ratio (≥0.75) guards to prevent short stopwords
+       like ``"does"`` from matching ``"donejs"``.
 
     Args:
         q: Raw user question string.
@@ -96,8 +123,11 @@ def _fuzzy_slug(q: str, known_slugs: list[str]) -> str | None:
         return None
     q_lower = q.lower()
 
-    # Pass 1: substring / whole-word match (exact and hyphen→space variant).
+    # Pass 1: whole-word match — collect all, prefer longest (most specific).
+    pass1_matches: list[str] = []
     for slug in known_slugs:
+        if slug in _STOPWORD_SLUGS:
+            continue
         slug_re = re.compile(
             r"\b"
             + re.escape(slug)
@@ -109,14 +139,22 @@ def _fuzzy_slug(q: str, known_slugs: list[str]) -> str | None:
             re.IGNORECASE,
         )
         if slug_re.search(q_lower):
-            return slug
+            pass1_matches.append(slug)
+    if pass1_matches:
+        return max(pass1_matches, key=len)
 
-    # Pass 2: difflib word-level fuzzy match.
+    # Pass 2: difflib word-level fuzzy match with stopword + length guards.
     words = re.findall(r"[a-z0-9]+", q_lower)
     for word in words:
-        matches = difflib.get_close_matches(word, known_slugs, n=1, cutoff=0.8)
+        if len(word) < 4 or word in _STOPWORD_SLUGS:
+            continue
+        matches = difflib.get_close_matches(word, known_slugs, n=1, cutoff=0.85)
         if matches:
-            return str(matches[0])
+            slug = str(matches[0])
+            # Length-ratio guard: reject if token and slug are too different in length.
+            ratio = min(len(word), len(slug)) / max(len(word), len(slug))
+            if ratio >= 0.75:
+                return slug
 
     return None
 
