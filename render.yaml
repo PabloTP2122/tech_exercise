@@ -16,7 +16,7 @@ services:
 databases:
   - name: bitovi-blog-rag-db
     databaseName: blog_rag
-    plan: starter
+    plan: free
     postgresMajorVersion: "16"
     # NOTE: pgvector extension must be enabled manually after DB is provisioned.
     # Run in Render DB shell: CREATE EXTENSION IF NOT EXISTS vector;
