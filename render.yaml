@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: bitovi-blog-rag-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false          # set manually in Render dashboard (secret)
+      - key: DATABASE_URL
+        sync: false          # set manually — copy internal URL from managed DB below,
+                             # then change scheme: postgres:// → postgresql+psycopg://
+                             # See spec/deploy/render.md Gotcha #2
+
+databases:
+  - name: bitovi-blog-rag-db
+    databaseName: blog_rag
+    plan: starter
+    postgresMajorVersion: "16"
+    # NOTE: pgvector extension must be enabled manually after DB is provisioned.
+    # Run in Render DB shell: CREATE EXTENSION IF NOT EXISTS vector;
+    # See spec/deploy/render.md Gotcha #3

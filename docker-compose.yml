@@ -15,5 +15,17 @@ services:
       timeout: 5s
       retries: 10
 
+  api:
+    build: .
+    profiles: ["app"]          # NOT started by default; use --profile app or make up
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: "postgresql+psycopg://rag:rag@db:5432/blog_rag"
+      OPENAI_API_KEY: "${OPENAI_API_KEY}"
+
 volumes:
   pgdata:

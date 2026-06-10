@@ -1,4 +1,4 @@
-.PHONY: install dev db-up db-down ingest load test test-live test-api lint format format-check typecheck check eyeball eyeball-all discover-check preflight studio clean help
+.PHONY: install dev db-up db-down up down-all ingest load test test-live test-api lint format format-check typecheck check eyeball eyeball-all discover-check preflight studio clean help
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -13,6 +13,12 @@ db-up: ## Start PostgreSQL + pgvector container (detached)
 
 db-down: ## Stop containers (preserves data volume)
 	docker compose down
+
+up: ## Start db + api containers (requires docker; builds image)
+	docker compose --profile app up -d --build
+
+down-all: ## Stop all containers including api
+	docker compose --profile app down
 
 dev: ## Start FastAPI dev server on :8000  (requires db-up)
 	uv run uvicorn api.main:app --reload --port 8000
