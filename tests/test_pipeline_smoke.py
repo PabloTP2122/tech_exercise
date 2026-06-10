@@ -27,7 +27,7 @@ import pytest
 from ingest.loader import build_documents, list_article_urls
 from ingest.preview import emulate_vector_view
 
-# Metadata keys every document must carry (from TASK-04 / TASK-05 contract).
+# Metadata keys every document must carry (ingest pipeline contract).
 _REQUIRED_METADATA_KEYS = {
     "source_url",
     "title",

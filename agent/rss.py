@@ -2,7 +2,7 @@
 
 Thin SRP fetcher behind a single try/except.  Returns the newest feed items,
 or [] on any failure (offline, timeout, HTTP error, malformed XML).  The caller
-(TASK-09 recency node) owns the SQL-vs-RSS merge and pubDate normalisation.
+(the recency node) owns the SQL-vs-RSS merge and pubDate normalisation.
 
 Public API
 ----------

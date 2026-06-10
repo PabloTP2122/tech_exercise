@@ -147,7 +147,7 @@ def get_article_count(engine: sa.Engine) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Slug helpers — used by the TASK-06 classifier and TASK-07/09 SQL routes
+# Slug helpers — used by the classifier and the SQL routes
 # ---------------------------------------------------------------------------
 
 # ADR-0008 S4: read-time slug validation grammar.
@@ -226,7 +226,7 @@ def list_category_slugs(engine: sa.Engine) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# Agent runtime helpers — count, enumeration, recency (TASK-09 nodes)
+# Agent runtime helpers — count, enumeration, recency (routing nodes)
 # ---------------------------------------------------------------------------
 
 

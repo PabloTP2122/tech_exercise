@@ -8,7 +8,7 @@ SEMANTIC_QA_SYSTEM_PROMPT
 
 NO_MATCH_RESPONSE
     Exact sentence returned when no relevant context was found (shared by the relevance-gate
-    and the generate node so both TASK-09 code and tests import from one source of truth).
+    and the generate node so both share one source of truth).
 
 render_count(n, slug)  -> str
 render_enumeration(rows) -> str
@@ -45,7 +45,7 @@ Context:
 """
 
 # ---------------------------------------------------------------------------
-# Shared constant — used by relevance-gate (TASK-09) and generate node
+# Shared constant — used by the relevance-gate and the generate node
 # ---------------------------------------------------------------------------
 
 NO_MATCH_RESPONSE = "I couldn't find information about that in the blog."

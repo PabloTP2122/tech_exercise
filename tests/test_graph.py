@@ -1,4 +1,4 @@
-"""Tests for TASK-09: agent/graph.py, nodes, routes, and SQL helpers.
+"""Tests for agent/graph.py, nodes, routes, and SQL helpers.
 
 All tests are fully offline — no DB, no LLM, no network.  Deps are injected
 via the node-factory pattern and patched where the node queries the DB or LLM.
@@ -701,7 +701,7 @@ class TestGenerateNodeNoDoubleWrap:
 
 
 # ---------------------------------------------------------------------------
-# Generate node — structured-output behaviour (TASK-11S)
+# Generate node — structured-output behaviour
 # ---------------------------------------------------------------------------
 
 _URL_A = "https://www.bitovi.com/blog/article-a"

@@ -6,7 +6,7 @@ from ingest.load_vectorstore import _METADATA_COLUMN_NAMES, build_chunks, wrap_a
 
 _SAMPLE = "Run `git diff` to inspect the changes."
 
-# Full 7-key metadata matching the ingest contract (extract.build_document + TASK-05G).
+# Full 7-key metadata matching the ingest contract (extract.build_document).
 _BASE_META: dict[str, str] = {
     "source_url": "https://www.bitovi.com/blog/test-article",
     "title": "Test Article Title",
