@@ -39,6 +39,7 @@ from agent.nodes.semantic_qa import (
 from agent.routes.route import route_query
 from api.config import get_settings
 from ingest.catalog_db import list_category_slugs
+from ingest.load_vectorstore import METADATA_COLUMN_NAMES
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +109,7 @@ def build_graph(
             engine=pg_engine,
             embedding_service=embeddings,
             table_name=settings.collection_name,
+            metadata_columns=METADATA_COLUMN_NAMES,
         )
 
     if llm is None:

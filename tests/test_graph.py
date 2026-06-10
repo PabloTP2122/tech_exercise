@@ -227,18 +227,30 @@ class TestMakeSqlEnumerateNode:
             result = node(_state(query_type="enumeration", category_slug="devops"))
         assert result["sources"] == rows
 
-    def test_answer_uses_render_enumeration(self) -> None:
+    def test_answer_is_summary_sentence_not_list(self) -> None:
+        """Answer must be a summary sentence — not a numbered list with inline URLs."""
         rows = [{"title": "X", "url": "https://www.bitovi.com/blog/x"}]
         with patch("agent.nodes.catalog.list_articles_by_slug", return_value=rows):
             node = make_sql_enumerate_node(_mock_engine())
             result = node(_state(query_type="enumeration", category_slug="devops"))
-        assert "X" in result["answer"]
+        assert "devops" in result["answer"]
+        assert "complete list" in result["answer"]
+        assert "http" not in result["answer"]  # no inline URLs
 
     def test_empty_rows_returns_no_articles_message(self) -> None:
         with patch("agent.nodes.catalog.list_articles_by_slug", return_value=[]):
             node = make_sql_enumerate_node(_mock_engine())
             result = node(_state(query_type="enumeration", category_slug="devops"))
         assert "No articles" in result["answer"]
+
+    def test_html_entities_unescaped_in_sources(self) -> None:
+        """&amp; in DB titles must become & in sources (never raw HTML entities)."""
+        rows = [{"title": "CI/CD &amp; DevOps", "url": "https://www.bitovi.com/blog/cicd"}]
+        with patch("agent.nodes.catalog.list_articles_by_slug", return_value=rows):
+            node = make_sql_enumerate_node(_mock_engine())
+            result = node(_state(query_type="enumeration", category_slug="devops"))
+        assert result["sources"][0]["title"] == "CI/CD & DevOps"
+        assert "&amp;" not in result["sources"][0]["title"]
 
 
 # ---------------------------------------------------------------------------
@@ -315,6 +327,49 @@ class TestMakeHybridRecencyNode:
             node = make_hybrid_recency_node(_mock_engine())
             result = node(_state(query_type="recency"))
         assert result["sources"][0]["url"] == _SQL_ROW["url"]
+
+    def test_answer_has_human_date_not_iso(self) -> None:
+        """Answer must contain a human date, not a raw ISO timestamp."""
+        with (
+            patch("agent.nodes.recency.get_recent_articles", return_value=[_SQL_ROW]),
+            patch("agent.nodes.recency.fetch_recent", return_value=[]),
+        ):
+            node = make_hybrid_recency_node(_mock_engine())
+            result = node(_state(query_type="recency"))
+        assert "January 1, 2026" in result["answer"]
+        assert "2026-01-01 00:00:00" not in result["answer"]
+
+    def test_answer_has_no_inline_url(self) -> None:
+        """URLs must not appear in the answer prose — only in sources."""
+        with (
+            patch("agent.nodes.recency.get_recent_articles", return_value=[_SQL_ROW]),
+            patch("agent.nodes.recency.fetch_recent", return_value=[]),
+        ):
+            node = make_hybrid_recency_node(_mock_engine())
+            result = node(_state(query_type="recency"))
+        assert "http" not in result["answer"]
+
+    def test_answer_has_no_markdown_bold(self) -> None:
+        """No **title** literals — frontend renders Markdown, not the template."""
+        with (
+            patch("agent.nodes.recency.get_recent_articles", return_value=[_SQL_ROW]),
+            patch("agent.nodes.recency.fetch_recent", return_value=[]),
+        ):
+            node = make_hybrid_recency_node(_mock_engine())
+            result = node(_state(query_type="recency"))
+        assert "**" not in result["answer"]
+
+    def test_html_entities_unescaped_in_sources(self) -> None:
+        """&amp; in DB titles must become & in sources."""
+        row_with_entity = {**_SQL_ROW, "title": "CI/CD &amp; DevOps"}
+        with (
+            patch("agent.nodes.recency.get_recent_articles", return_value=[row_with_entity]),
+            patch("agent.nodes.recency.fetch_recent", return_value=[]),
+        ):
+            node = make_hybrid_recency_node(_mock_engine())
+            result = node(_state(query_type="recency"))
+        assert result["sources"][0]["title"] == "CI/CD & DevOps"
+        assert "&amp;" not in result["sources"][0]["title"]
 
 
 # ---------------------------------------------------------------------------

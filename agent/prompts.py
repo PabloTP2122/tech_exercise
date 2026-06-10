@@ -74,37 +74,49 @@ def render_count(n: int, slug: str | None) -> str:
     return f"There {verb} {count_word} {noun} about {slug} on the Bitovi blog."
 
 
-def render_enumeration(rows: list[dict[str, str]]) -> str:
-    """Return a numbered Markdown list of articles.
+def render_enumeration(rows: list[dict[str, str]], slug: str | None = None) -> str:
+    """Return a summary sentence for an enumeration response.
+
+    URLs are intentionally omitted — they belong in the REFERENCES list rendered
+    by the frontend, not inline in the answer prose.
 
     Args:
         rows: Dicts with at least ``"title"`` and ``"url"`` keys, in display order.
+        slug: Category slug, or ``None`` for a general / recent-articles query.
 
     Returns:
-        Numbered Markdown list, or a "no articles found" message when ``rows`` is empty.
+        A one-sentence summary, or a "no articles found" message when ``rows`` is empty.
     """
     if not rows:
         return "No articles found."
-    lines = [f"{i}. {row['title']} — {row['url']}" for i, row in enumerate(rows, 1)]
-    return "\n".join(lines)
+    n = len(rows)
+    noun = "article" if n == 1 else "articles"
+    if slug:
+        return f"I found {n} {noun} tagged {slug} in the Bitovi blog. Here is the complete list."
+    return f"I found {n} recent {noun} on the Bitovi blog. Here is the complete list."
 
 
 def render_recency(items: list[dict[str, str]]) -> str:
-    """Return a human-readable summary of the most recent article(s).
+    """Return a clean prose summary of the most recent article(s).
+
+    URLs are intentionally omitted — they belong in the REFERENCES list rendered
+    by the frontend, not inline in the answer prose.
 
     Args:
-        items: Dicts with at least ``"title"``, ``"url"``, and ``"date"`` keys,
-               newest-first. The caller normalises RSS ``pubDate`` to ``"date"``
-               before passing in.
+        items: Dicts with at least ``"title"`` and ``"date"`` keys, newest-first.
+               ``"date"`` must already be a human-readable string (e.g.
+               ``"May 28, 2026"``), formatted by the calling node before passing in.
 
     Returns:
-        Formatted recency summary, or a fallback message when ``items`` is empty.
+        Clean prose summary, or a fallback message when ``items`` is empty.
     """
     if not items:
         return "No recent articles found."
     first = items[0]
-    header = f"The most recent post is **{first['title']}** ({first['date']}):\n{first['url']}"
+    lead = (
+        f'The most recent post on the Bitovi blog is "{first["title"]}"'
+        f" (published {first['date']})."
+    )
     if len(items) == 1:
-        return header
-    rest = "\n".join(f"- {it['title']} ({it['date']}) — {it['url']}" for it in items[1:])
-    return f"{header}\n\nOther recent posts:\n{rest}"
+        return lead
+    return f"{lead} Here are some other recent posts."

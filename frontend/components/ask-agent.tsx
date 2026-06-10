@@ -3,6 +3,8 @@
 import { useState, type KeyboardEvent } from "react"
 import useSWRMutation from "swr/mutation"
 import { ArrowUp, Loader2, Sparkles, BookOpen, AlertCircle } from "lucide-react"
+import ReactMarkdown from "react-markdown"
+import remarkGfm from "remark-gfm"
 import { askFetcher, type AskResponse } from "@/lib/api"
 import { SourceLink } from "@/components/source-link"
 
@@ -99,9 +101,20 @@ export function AskAgent() {
             )}
           </div>
 
-          <p className="whitespace-pre-wrap text-pretty leading-relaxed text-brand-deep">
-            {data.answer}
-          </p>
+          <div className="prose prose-sm max-w-none leading-relaxed text-brand-deep [&_a]:text-brand-teal [&_a]:underline [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:py-0.5 [&_code]:text-sm">
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              components={{
+                a: ({ href, children }) => (
+                  <a href={href} target="_blank" rel="noopener noreferrer">
+                    {children}
+                  </a>
+                ),
+              }}
+            >
+              {data.answer}
+            </ReactMarkdown>
+          </div>
 
           {data.sources?.length > 0 && (
             <div className="flex flex-col gap-3 border-t border-border pt-5">

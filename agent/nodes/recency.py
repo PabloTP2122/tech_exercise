@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from datetime import datetime
 from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING, Any
 
@@ -17,11 +18,45 @@ import sqlalchemy as sa
 from agent.prompts import render_recency
 from agent.rss import fetch_recent
 from ingest.catalog_db import _parse_published_at, get_recent_articles
+from ingest.clean import clean_title
 
 if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
+
+_HUMAN_DATE_FMT = "%B %-d, %Y"  # e.g. "May 28, 2026"
+
+
+def _format_sql_date(value: str) -> str:
+    """Format a ``published_at`` DB string to a human-readable date.
+
+    Tries _parse_published_at first (handles the _DATE_FORMATS list), then
+    falls back to datetime.fromisoformat() which handles the "+00:00" variant
+    stored by newer ingest runs (e.g. "2026-05-28 16:51:37+00:00").
+    Returns the original string unchanged if all parsing attempts fail.
+    """
+    dt = _parse_published_at(value)
+    if dt is None:
+        try:
+            dt = datetime.fromisoformat(value)
+        except (ValueError, TypeError):
+            return value
+    try:
+        return dt.strftime(_HUMAN_DATE_FMT)
+    except Exception:
+        return value
+
+
+def _format_rss_date(value: str) -> str:
+    """Format an RFC-2822 RSS ``pubDate`` to a human-readable date.
+
+    Returns the original string unchanged if parsing fails (fail-safe).
+    """
+    try:
+        return parsedate_to_datetime(value).strftime(_HUMAN_DATE_FMT)
+    except Exception:
+        return value
 
 
 def make_hybrid_recency_node(engine: sa.Engine) -> Callable[[dict[str, Any]], dict[str, Any]]:
@@ -53,18 +88,18 @@ def make_hybrid_recency_node(engine: sa.Engine) -> Callable[[dict[str, Any]], di
         if use_rss:
             items = [
                 {
-                    "title": it["title"],
+                    "title": clean_title(it["title"]),
                     "url": it["link"],
-                    "date": it["pubDate"],
+                    "date": _format_rss_date(it["pubDate"]),
                 }
                 for it in rss_items
             ]
         else:
             items = [
                 {
-                    "title": row["title"],
+                    "title": clean_title(row["title"]),
                     "url": row["url"],
-                    "date": row["published_at"],
+                    "date": _format_sql_date(row["published_at"]),
                 }
                 for row in sql_rows
             ]

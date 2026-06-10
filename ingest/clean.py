@@ -13,6 +13,7 @@ Falls back to the original string if the selector is absent (logging a warning)
 to avoid silent data-loss; callers should treat this as a data-quality signal.
 """
 
+import html
 import logging
 from typing import NamedTuple
 
@@ -23,6 +24,22 @@ from markdownify import markdownify
 logger = logging.getLogger(__name__)
 
 _BODY_SELECTOR = "#hs_cos_wrapper_post_body"
+
+
+def clean_title(text: str) -> str:
+    """Unescape HTML entities in an article title (e.g. ``&amp;`` → ``&``).
+
+    Titles stored in the catalog DB may carry HTML entities because the
+    original markup was not unescaped at ingest time.  This helper fixes
+    them at read time so answers and REFERENCES cards never show raw entities.
+
+    Args:
+        text: Raw title string, possibly containing HTML entities.
+
+    Returns:
+        Unescaped title string, or an empty string if ``text`` is falsy.
+    """
+    return html.unescape(text or "")
 
 
 class CleanResult(NamedTuple):

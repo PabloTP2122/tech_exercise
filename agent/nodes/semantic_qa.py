@@ -17,6 +17,7 @@ from langchain_core.messages import SystemMessage
 from pydantic import BaseModel
 
 from agent.prompts import NO_MATCH_RESPONSE, SEMANTIC_QA_SYSTEM_PROMPT
+from ingest.clean import clean_title
 from ingest.load_vectorstore import wrap_as_data
 
 if TYPE_CHECKING:
@@ -91,8 +92,9 @@ def make_generate_node(llm: ChatOpenAI) -> Callable[[dict[str, Any]], dict[str, 
         docs: list[Document] = state.get("docs", [])
         context = "\n\n".join(doc.page_content for doc in docs)
         # ADR-0008: {source_url: title} whitelist; context already wrapped at ingest.
+        # ADR-0008: build whitelist; clean_title unescapes HTML entities (e.g. &amp; → &).
         whitelist: dict[str, str] = {
-            doc.metadata["source_url"]: doc.metadata.get("title", "")
+            doc.metadata["source_url"]: clean_title(doc.metadata.get("title", ""))
             for doc in docs
             if doc.metadata.get("source_url")
         }

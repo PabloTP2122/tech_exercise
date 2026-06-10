@@ -18,6 +18,7 @@ from sqlalchemy import text
 from agent.prompts import render_count, render_enumeration
 from api.config import get_settings
 from ingest.catalog_db import count_articles_by_slug, get_article_count, list_articles_by_slug
+from ingest.clean import clean_title
 
 if TYPE_CHECKING:
     pass
@@ -57,7 +58,7 @@ def make_sql_enumerate_node(engine: sa.Engine) -> Callable[[dict[str, Any]], dic
     def sql_enumerate(state: dict[str, Any]) -> dict[str, Any]:
         slug: str | None = state.get("category_slug")
         if slug:
-            rows = list_articles_by_slug(engine, slug)
+            raw_rows = list_articles_by_slug(engine, slug)
         else:
             # No slug: return recent articles up to limit (avoid unbounded response).
             with engine.connect() as conn:
@@ -67,7 +68,9 @@ def make_sql_enumerate_node(engine: sa.Engine) -> Callable[[dict[str, Any]], dic
                     ),
                     {"n": _ENUMERATE_ALL_LIMIT},
                 ).fetchall()
-            rows = [{"title": r[0] or "", "url": r[1] or ""} for r in db_rows]
-        return {"answer": render_enumeration(rows), "sources": rows}
+            raw_rows = [{"title": r[0] or "", "url": r[1] or ""} for r in db_rows]
+        # Unescape HTML entities (e.g. &amp; → &) stored in DB titles.
+        rows = [{"title": clean_title(r["title"]), "url": r["url"]} for r in raw_rows]
+        return {"answer": render_enumeration(rows, slug), "sources": rows}
 
     return sql_enumerate

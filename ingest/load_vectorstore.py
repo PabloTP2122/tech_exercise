@@ -34,8 +34,11 @@ _METADATA_COLUMNS: list[Column] = [
     Column("description", "TEXT"),
     Column("content_origin", "TEXT"),
 ]
-# Names only — used by PGVectorStore.create_sync (which takes str, not Column).
-_METADATA_COLUMN_NAMES: list[str] = [c.name for c in _METADATA_COLUMNS]
+# Public: shared by ingest (DDL) AND agent/graph.py (query-time store) so
+# both sides hydrate the same typed columns — DRY single source of truth.
+METADATA_COLUMN_NAMES: list[str] = [c.name for c in _METADATA_COLUMNS]
+# Internal alias kept for backward compatibility with existing call-sites.
+_METADATA_COLUMN_NAMES = METADATA_COLUMN_NAMES
 
 logger = logging.getLogger(__name__)
 

@@ -51,64 +51,103 @@ class TestRenderCount:
 
 
 class TestRenderEnumeration:
-    def test_empty_rows(self) -> None:
+    def test_empty_rows_no_slug(self) -> None:
         assert render_enumeration([]) == "No articles found."
 
-    def test_single_row(self) -> None:
-        rows = [{"title": "Intro to LangGraph", "url": "https://bitovi.com/blog/langgraph"}]
-        result = render_enumeration(rows)
-        assert result == "1. Intro to LangGraph — https://bitovi.com/blog/langgraph"
+    def test_empty_rows_with_slug(self) -> None:
+        assert render_enumeration([], slug="devops") == "No articles found."
 
-    def test_multiple_rows_numbered_and_ordered(self) -> None:
+    def test_with_slug_summary_sentence(self) -> None:
         rows = [
-            {"title": "First", "url": "https://bitovi.com/1"},
-            {"title": "Second", "url": "https://bitovi.com/2"},
-            {"title": "Third", "url": "https://bitovi.com/3"},
+            {"title": "A", "url": "https://bitovi.com/a"},
+            {"title": "B", "url": "https://bitovi.com/b"},
         ]
-        lines = render_enumeration(rows).splitlines()
-        assert lines[0].startswith("1.")
-        assert lines[1].startswith("2.")
-        assert lines[2].startswith("3.")
-        assert "First" in lines[0]
-        assert "Third" in lines[2]
+        result = render_enumeration(rows, slug="devops")
+        assert "2 articles" in result
+        assert "devops" in result
+        assert "complete list" in result
 
-    def test_order_preserved(self) -> None:
+    def test_without_slug_recent_articles(self) -> None:
+        rows = [{"title": "X", "url": "https://bitovi.com/x"}]
+        result = render_enumeration(rows, slug=None)
+        assert "1 recent article" in result
+        assert "complete list" in result
+
+    def test_singular_noun(self) -> None:
+        rows = [{"title": "Only One", "url": "https://bitovi.com/one"}]
+        result = render_enumeration(rows, slug="ai")
+        assert "1 article" in result  # slug path: "1 article tagged ai"
+        assert "articles" not in result
+
+    def test_plural_noun(self) -> None:
         rows = [
-            {"title": "B Article", "url": "https://bitovi.com/b"},
-            {"title": "A Article", "url": "https://bitovi.com/a"},
+            {"title": "A", "url": "https://bitovi.com/a"},
+            {"title": "B", "url": "https://bitovi.com/b"},
         ]
+        result = render_enumeration(rows, slug="ai")
+        assert "2 articles" in result
+
+    def test_no_inline_url_in_answer(self) -> None:
+        """URLs must not appear inline — they belong in the REFERENCES list."""
+        rows = [{"title": "Article", "url": "https://bitovi.com/blog/article"}]
+        result = render_enumeration(rows, slug="react")
+        assert "http" not in result
+
+    def test_default_slug_none(self) -> None:
+        """Calling without slug= kwarg uses None default — no crash."""
+        rows = [{"title": "T", "url": "https://bitovi.com/t"}]
         result = render_enumeration(rows)
-        assert result.index("B Article") < result.index("A Article")
+        assert "1 recent article" in result
 
 
 class TestRenderRecency:
     def test_empty_items(self) -> None:
         assert render_recency([]) == "No recent articles found."
 
-    def test_single_item(self) -> None:
-        items = [{"title": "Latest Post", "url": "https://bitovi.com/latest", "date": "2026-06-01"}]
+    def test_single_item_contains_title_and_date(self) -> None:
+        items = [
+            {"title": "Latest Post", "url": "https://bitovi.com/latest", "date": "June 1, 2026"}
+        ]
         result = render_recency(items)
         assert "Latest Post" in result
-        assert "2026-06-01" in result
-        assert "https://bitovi.com/latest" in result
+        assert "June 1, 2026" in result
 
-    def test_multiple_items_first_is_prominent(self) -> None:
+    def test_single_item_no_inline_url(self) -> None:
+        """URL must not appear inline — it belongs in the REFERENCES list."""
         items = [
-            {"title": "Newest", "url": "https://bitovi.com/new", "date": "2026-06-08"},
-            {"title": "Older", "url": "https://bitovi.com/old", "date": "2026-05-01"},
+            {"title": "Latest Post", "url": "https://bitovi.com/latest", "date": "June 1, 2026"}
         ]
         result = render_recency(items)
-        assert result.index("Newest") < result.index("Older")
-        assert "Older" in result
-        assert "2026-05-01" in result
+        assert "http" not in result
 
-    def test_multiple_items_contains_other_section(self) -> None:
+    def test_single_item_no_markdown_bold(self) -> None:
+        """No `**title**` literal — frontend renders Markdown, not the template."""
+        items = [{"title": "Bold Title", "url": "https://bitovi.com/b", "date": "May 1, 2026"}]
+        result = render_recency(items)
+        assert "**" not in result
+
+    def test_multiple_items_lead_title_in_answer(self) -> None:
+        """Lead item title must appear in the answer; secondary items go to REFERENCES only."""
         items = [
-            {"title": "A", "url": "https://bitovi.com/a", "date": "2026-06-08"},
-            {"title": "B", "url": "https://bitovi.com/b", "date": "2026-06-07"},
-            {"title": "C", "url": "https://bitovi.com/c", "date": "2026-06-06"},
+            {"title": "Newest", "url": "https://bitovi.com/new", "date": "June 8, 2026"},
+            {"title": "Older", "url": "https://bitovi.com/old", "date": "May 1, 2026"},
         ]
         result = render_recency(items)
-        assert "Other recent posts" in result
-        assert "B" in result
-        assert "C" in result
+        assert "Newest" in result
+
+    def test_multiple_items_no_inline_urls(self) -> None:
+        items = [
+            {"title": "A", "url": "https://bitovi.com/a", "date": "June 8, 2026"},
+            {"title": "B", "url": "https://bitovi.com/b", "date": "June 7, 2026"},
+        ]
+        result = render_recency(items)
+        assert "http" not in result
+
+    def test_multiple_items_trailing_sentence(self) -> None:
+        items = [
+            {"title": "A", "url": "https://bitovi.com/a", "date": "June 8, 2026"},
+            {"title": "B", "url": "https://bitovi.com/b", "date": "June 7, 2026"},
+            {"title": "C", "url": "https://bitovi.com/c", "date": "June 6, 2026"},
+        ]
+        result = render_recency(items)
+        assert "other recent posts" in result.lower()
