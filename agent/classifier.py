@@ -14,13 +14,20 @@ classify(question, *, known_slugs=None) -> QueryClassification
 import difflib
 import logging
 import re
-from typing import Any
+from typing import Any, Literal
 
 import sqlalchemy as sa
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel
 
-from agent.classification_rules import REGEX_RULES, STOPWORD_SLUGS, QueryType
+from agent.classification_rules import (
+    OLDEST_RE,
+    RECENCY_LIMIT_RE,
+    REGEX_RULES,
+    STOPWORD_SLUGS,
+    YEAR_RE,
+    QueryType,
+)
 from api.config import get_settings
 from ingest.catalog_db import list_category_slugs
 from ingest.load_vectorstore import wrap_as_data
@@ -38,14 +45,24 @@ _STOPWORD_SLUGS = STOPWORD_SLUGS
 _REGEX_RULES = REGEX_RULES
 
 
+# Cap for the parsed recency item count ("last 50 posts" still returns 10).
+_RECENCY_LIMIT_CAP = 10
+_RECENCY_LIMIT_DEFAULT = 3
+
+
 class QueryClassification(BaseModel):
     """Result of classifying a user query.
 
     Field name ``category_slug`` (not ``topic``) matches ADR-0006 AgentState.
+    ``recency_direction``/``recency_limit`` are only meaningful for recency
+    queries; ``year`` only for count/enumeration.
     """
 
     query_type: QueryType
     category_slug: str | None
+    recency_direction: Literal["newest", "oldest"] = "newest"
+    recency_limit: int = _RECENCY_LIMIT_DEFAULT
+    year: int | None = None
 
 
 class _SlugResult(BaseModel):
@@ -67,6 +84,34 @@ def _regex_query_type(q: str) -> QueryType:
         if rule.pattern.search(q):
             return rule.query_type
     return "semantic_qa"
+
+
+def _recency_direction(q: str) -> Literal["newest", "oldest"]:
+    """Return the recency sort direction implied by the question.
+
+    Only called for recency-routed questions, where "first" unambiguously
+    means the earliest post (the routing rule already guarded the pattern).
+    """
+    return "oldest" if OLDEST_RE.search(q) else "newest"
+
+
+def _recency_limit(q: str) -> int:
+    """Return the requested item count for a recency question.
+
+    Extracts a standalone 1-2 digit number ("last 5 posts" → 5), capped at
+    ``_RECENCY_LIMIT_CAP``; defaults to ``_RECENCY_LIMIT_DEFAULT``. The
+    two-digit bound means years like "2023" can never bind here.
+    """
+    match = RECENCY_LIMIT_RE.search(q)
+    if match:
+        return min(int(match.group(1)), _RECENCY_LIMIT_CAP)
+    return _RECENCY_LIMIT_DEFAULT
+
+
+def _extract_year(q: str) -> int | None:
+    """Return a 20XX calendar year mentioned in the question, or ``None``."""
+    match = YEAR_RE.search(q)
+    return int(match.group(1)) if match else None
 
 
 def _fuzzy_slug(q: str, known_slugs: list[str]) -> str | None:
@@ -213,7 +258,8 @@ def classify(question: str, *, known_slugs: list[str] | None = None) -> QueryCla
             tests fully offline (no DB, no API key required).
 
     Returns:
-        :class:`QueryClassification` with ``query_type`` and ``category_slug``.
+        :class:`QueryClassification` with ``query_type``, ``category_slug``,
+        and the per-type slots (recency direction/limit, year filter).
     """
     slugs = known_slugs if known_slugs is not None else _load_slugs()
     query_type = _regex_query_type(question)
@@ -228,4 +274,20 @@ def classify(question: str, *, known_slugs: list[str] | None = None) -> QueryCla
     if slug is not None and slug not in slugs:
         slug = None
 
-    return QueryClassification(query_type=query_type, category_slug=slug)
+    # Slot extraction — only where the slot is meaningful for the route.
+    direction: Literal["newest", "oldest"] = "newest"
+    limit = _RECENCY_LIMIT_DEFAULT
+    year: int | None = None
+    if query_type == "recency":
+        direction = _recency_direction(question)
+        limit = _recency_limit(question)
+    elif query_type in {"count", "enumeration"}:
+        year = _extract_year(question)
+
+    return QueryClassification(
+        query_type=query_type,
+        category_slug=slug,
+        recency_direction=direction,
+        recency_limit=limit,
+        year=year,
+    )

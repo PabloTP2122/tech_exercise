@@ -312,3 +312,103 @@ class TestClassify:
             f"Expected None but got {result.category_slug!r} — "
             "difflib stopword/length-ratio guard may be missing"
         )
+
+
+# ---------------------------------------------------------------------------
+# Route edge cases: oldest/first, last-N, year filter (slot extraction)
+# ---------------------------------------------------------------------------
+
+
+class TestDirectionRouting:
+    def test_oldest_routes_to_recency(self) -> None:
+        assert _regex_query_type("What is the oldest blog post?") == "recency"
+
+    def test_earliest_routes_to_recency(self) -> None:
+        assert _regex_query_type("Show the earliest article about react") == "recency"
+
+    def test_first_post_routes_to_recency(self) -> None:
+        assert _regex_query_type("What was Bitovi's first blog post?") == "recency"
+
+    def test_first_article_about_topic_routes_to_recency(self) -> None:
+        assert _regex_query_type("first article about react") == "recency"
+
+    def test_read_first_stays_semantic(self) -> None:
+        """Guard: 'first' without a following post/article noun must not misroute."""
+        assert _regex_query_type("Which article should I read first?") == "semantic_qa"
+
+    def test_last_n_posts_routes_to_recency(self) -> None:
+        assert _regex_query_type("Show me the last 5 posts") == "recency"
+
+    def test_last_article_routes_to_recency(self) -> None:
+        assert _regex_query_type("What was the last article?") == "recency"
+
+    def test_oldest_beats_enumeration(self) -> None:
+        """Recency rules sit before enumeration: date-ordered, not listed."""
+        assert _regex_query_type("list the oldest articles") == "recency"
+
+    def test_count_still_beats_oldest(self) -> None:
+        assert _regex_query_type("how many of the oldest articles are there?") == "count"
+
+
+class TestYearRouting:
+    def test_articles_from_year_routes_to_enumeration(self) -> None:
+        assert _regex_query_type("articles from 2023") == "enumeration"
+
+    def test_posts_published_in_year(self) -> None:
+        assert _regex_query_type("posts published in 2024") == "enumeration"
+
+    def test_count_with_year_stays_count(self) -> None:
+        assert _regex_query_type("How many articles did Bitovi publish in 2023?") == "count"
+
+
+class TestSlotExtraction:
+    def test_oldest_direction(self) -> None:
+        result = classify("What is the oldest blog post?", known_slugs=_SLUGS)
+        assert result.query_type == "recency"
+        assert result.recency_direction == "oldest"
+
+    def test_first_means_oldest(self) -> None:
+        result = classify("What was Bitovi's first blog post?", known_slugs=_SLUGS)
+        assert result.recency_direction == "oldest"
+
+    def test_latest_defaults_to_newest(self) -> None:
+        result = classify("What is the latest blog post?", known_slugs=_SLUGS)
+        assert result.recency_direction == "newest"
+        assert result.recency_limit == 3
+
+    def test_limit_parsed_from_last_n(self) -> None:
+        result = classify("Show me the last 5 posts", known_slugs=_SLUGS)
+        assert result.query_type == "recency"
+        assert result.recency_limit == 5
+
+    def test_limit_capped_at_ten(self) -> None:
+        result = classify("Show me the latest 50 posts", known_slugs=_SLUGS)
+        assert result.recency_limit == 10
+
+    def test_oldest_with_slug(self) -> None:
+        result = classify("earliest article about react", known_slugs=_SLUGS)
+        assert result.recency_direction == "oldest"
+        assert result.category_slug == "react"
+
+    def test_year_extracted_for_count(self) -> None:
+        with patch("agent.classifier._resolve_slug_via_llm", return_value=None):
+            result = classify("How many articles did Bitovi publish in 2023?", known_slugs=_SLUGS)
+        assert result.query_type == "count"
+        assert result.year == 2023
+
+    def test_year_extracted_for_enumeration(self) -> None:
+        with patch("agent.classifier._resolve_slug_via_llm", return_value=None):
+            result = classify("Show me all articles from 2023", known_slugs=_SLUGS)
+        assert result.query_type == "enumeration"
+        assert result.year == 2023
+
+    def test_year_not_extracted_for_semantic_qa(self) -> None:
+        result = classify("What changed in React in 2023?", known_slugs=_SLUGS)
+        assert result.query_type == "semantic_qa"
+        assert result.year is None
+
+    def test_year_never_binds_as_recency_limit(self) -> None:
+        """Two-digit limit bound: '2023' must not become the item count."""
+        result = classify("latest posts since 2023", known_slugs=_SLUGS)
+        assert result.query_type == "recency"
+        assert result.recency_limit == 3

@@ -113,6 +113,30 @@ GOLDEN: tuple[GoldenCase, ...] = (
         expected_slug="react",
         expected_keywords=("react",),
     ),
+    # --- route edge cases: direction, parsed limit, year filter ---
+    GoldenCase(
+        question="What was Bitovi's first blog post?",
+        expected_type="recency",
+        expected_direction="oldest",
+    ),
+    GoldenCase(
+        question="Show me the last 5 posts",
+        expected_type="recency",
+        expected_direction="newest",
+        expected_limit=5,
+    ),
+    GoldenCase(
+        question="How many articles did Bitovi publish in 2023?",
+        expected_type="count",
+        expected_year=2023,
+        expected_keywords=("published in 2023",),
+    ),
+    GoldenCase(
+        question="Show me all articles from 2023",
+        expected_type="enumeration",
+        expected_year=2023,
+        expected_url_fragment="/blog",
+    ),
     # --- known negative: must hit the no-match path, never hallucinate ---
     GoldenCase(
         question="Do you have a recipe for lasagna?",

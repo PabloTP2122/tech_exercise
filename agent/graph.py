@@ -53,6 +53,9 @@ class AgentState(TypedDict):
     question: str
     query_type: Literal["semantic_qa", "enumeration", "count", "recency"]
     category_slug: str | None
+    recency_direction: Literal["newest", "oldest"]  # recency only
+    recency_limit: int  # recency only ("last 5 posts" → 5)
+    year: int | None  # count/enumeration only ("articles from 2023" → 2023)
     docs: list[Document]
     scores: list[float]
     answer: str
@@ -143,6 +146,9 @@ def build_graph(
         return {
             "query_type": result.query_type,
             "category_slug": result.category_slug,
+            "recency_direction": result.recency_direction,
+            "recency_limit": result.recency_limit,
+            "year": result.year,
             "docs": [],
             "scores": [],
             "answer": "",

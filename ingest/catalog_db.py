@@ -276,22 +276,104 @@ def list_articles_by_slug(engine: sa.Engine, slug: str) -> list[dict[str, str]]:
     return [{"title": r[0] or "", "url": r[1] or ""} for r in rows]
 
 
-def get_recent_articles(engine: sa.Engine, limit: int = 3) -> list[dict[str, str]]:
-    """Return the most recently published articles.
+# Direction → ORDER BY clause. Chosen from this two-entry dict, never interpolated
+# from user input. NULLS LAST on both sides: Postgres defaults to NULLS FIRST for
+# DESC, which would surface never-dated articles as "the latest post".
+_RECENCY_ORDER = {
+    False: "DESC NULLS LAST",
+    True: "ASC NULLS LAST",
+}
+
+
+def get_recent_articles(
+    engine: sa.Engine, limit: int = 3, *, oldest: bool = False, slug: str | None = None
+) -> list[dict[str, str]]:
+    """Return the most recently (or earliest) published articles.
 
     Args:
         engine: SQLAlchemy sync engine.
         limit: Maximum number of rows to return.
+        oldest: ``True`` orders earliest-first (for "oldest/first post" queries).
+        slug: Optional validated category slug to filter by.
 
     Returns:
-        List of ``{title, url, published_at}`` dicts ordered newest first.
+        List of ``{title, url, published_at}`` dicts in the requested order.
+        Articles without a parsed date always sort last.
     """
+    where = " WHERE categories ILIKE :pat ESCAPE '\\'" if slug else ""
+    params: dict[str, int | str] = {"n": limit}
+    if slug:
+        params["pat"] = f"%,{escape_like(slug)},%"
     with engine.connect() as conn:
         rows = conn.execute(
             text(
                 "SELECT title, source_url, published_at FROM articles"
-                " ORDER BY published_at DESC LIMIT :n"
+                f"{where} ORDER BY published_at {_RECENCY_ORDER[oldest]} LIMIT :n"
             ),
-            {"n": limit},
+            params,
         ).fetchall()
     return [{"title": r[0] or "", "url": r[1] or "", "published_at": str(r[2] or "")} for r in rows]
+
+
+def _year_bounds(year: int) -> dict[str, datetime]:
+    """Return TIMESTAMPTZ-safe half-open bounds [Jan 1 of year, Jan 1 of year+1)."""
+    return {
+        "start": datetime(year, 1, 1, tzinfo=UTC),
+        "end": datetime(year + 1, 1, 1, tzinfo=UTC),
+    }
+
+
+def count_articles_by_year(engine: sa.Engine, year: int, *, slug: str | None = None) -> int:
+    """Return the number of articles published in ``year`` (optionally by slug).
+
+    Args:
+        engine: SQLAlchemy sync engine.
+        year: Calendar year, e.g. ``2023``.
+        slug: Optional validated category slug to filter by.
+
+    Returns:
+        Count of articles whose ``published_at`` falls inside the year.
+    """
+    slug_clause = " AND categories ILIKE :pat ESCAPE '\\'" if slug else ""
+    params: dict[str, datetime | str] = dict(_year_bounds(year))
+    if slug:
+        params["pat"] = f"%,{escape_like(slug)},%"
+    with engine.connect() as conn:
+        row = conn.execute(
+            text(
+                "SELECT COUNT(DISTINCT source_url) FROM articles"
+                " WHERE published_at >= :start AND published_at < :end"
+                f"{slug_clause}"
+            ),
+            params,
+        ).fetchone()
+    return int(row[0]) if row else 0
+
+
+def list_articles_by_year(
+    engine: sa.Engine, year: int, *, slug: str | None = None
+) -> list[dict[str, str]]:
+    """Return articles published in ``year`` (optionally by slug), newest first.
+
+    Args:
+        engine: SQLAlchemy sync engine.
+        year: Calendar year, e.g. ``2023``.
+        slug: Optional validated category slug to filter by.
+
+    Returns:
+        List of ``{title, url}`` dicts ordered newest first.
+    """
+    slug_clause = " AND categories ILIKE :pat ESCAPE '\\'" if slug else ""
+    params: dict[str, datetime | str] = dict(_year_bounds(year))
+    if slug:
+        params["pat"] = f"%,{escape_like(slug)},%"
+    with engine.connect() as conn:
+        rows = conn.execute(
+            text(
+                "SELECT title, source_url FROM articles"
+                " WHERE published_at >= :start AND published_at < :end"
+                f"{slug_clause} ORDER BY published_at DESC"
+            ),
+            params,
+        ).fetchall()
+    return [{"title": r[0] or "", "url": r[1] or ""} for r in rows]
