@@ -12,13 +12,12 @@ from bs4 import BeautifulSoup
 
 from ingest.clean import clean_html
 from ingest.extract import (
-    _recover_author,
-    _recover_date_published,
     build_document,
     extract_categories,
     extract_metadata,
     select_blogposting,
 )
+from ingest.recover import _recover_author, _recover_date_published
 
 # ---------------------------------------------------------------------------
 # Fixture loading

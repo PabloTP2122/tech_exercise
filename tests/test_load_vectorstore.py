@@ -2,7 +2,7 @@
 
 from langchain_core.documents import Document
 
-from ingest.load_vectorstore import _METADATA_COLUMN_NAMES, build_chunks, wrap_as_data
+from ingest.load_vectorstore import METADATA_COLUMN_NAMES, build_chunks, wrap_as_data
 
 _SAMPLE = "Run `git diff` to inspect the changes."
 
@@ -82,7 +82,7 @@ class TestBuildChunks:
         key in the Document metadata — the format-drift guard.
         """
         for chunk in build_chunks([_doc(_SHORT_BODY)]):
-            missing = set(_METADATA_COLUMN_NAMES) - set(chunk.metadata.keys())
+            missing = set(METADATA_COLUMN_NAMES) - set(chunk.metadata.keys())
             assert not missing, f"Chunk metadata missing PG columns: {missing}"
 
     def test_start_index_present_on_all_chunks(self) -> None:

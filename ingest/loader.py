@@ -6,9 +6,6 @@ and :mod:`ingest.extract` together and expose the public API used by
 
 Public API
 ----------
-list_article_urls()
-    Thin alias → :func:`ingest.discovery.list_sitemap_urls` (kept for
-    backward-compatibility with :mod:`tests.test_pipeline_smoke`).
 build_documents(filter_urls=None)
     Full ingest pipeline; returns :class:`~langchain_core.documents.Document`
     objects ready for chunking and embedding.
@@ -18,23 +15,11 @@ import logging
 
 from langchain_core.documents import Document
 
-from ingest.discovery import discover_article_urls, list_sitemap_urls
+from ingest.discovery import discover_article_urls
 from ingest.extract import build_document
 from ingest.fetcher import fetch_all
 
 logger = logging.getLogger(__name__)
-
-
-def list_article_urls() -> list[str]:
-    """Return all article URLs from the sitemap.
-
-    Thin alias for :func:`ingest.discovery.list_sitemap_urls` kept for
-    backward-compatibility with existing callers (e.g. the smoke test).
-
-    Returns:
-        Article URLs in sitemap order.  Returns ``[]`` on error.
-    """
-    return list_sitemap_urls()
 
 
 def build_documents(filter_urls: list[str] | None = None) -> list[Document]:

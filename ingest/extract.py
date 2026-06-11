@@ -26,6 +26,7 @@ from bs4 import BeautifulSoup
 from langchain_core.documents import Document
 
 from ingest import clean
+from ingest.recover import _recover_author, _recover_date_published
 
 logger = logging.getLogger(__name__)
 
@@ -90,87 +91,9 @@ def _ld_url_matches(candidate: dict[str, Any], url: str) -> bool:
     )
 
 
-# Regexes for recovering fields from raw JSON-LD strings, even malformed ones.
-_DATE_PUBLISHED_RE = re.compile(r'"datePublished"\s*:\s*"([^"]+)"')
-# Matches: "author": { ... "name": "Value" ... }  (DOTALL so it spans multiple lines)
-_AUTHOR_NAME_RE = re.compile(r'"author"\s*:\s*\{[^}]*?"name"\s*:\s*"([^"]+)"', re.DOTALL)
-
 # ADR-0008 S5: ingest-time slug whitelist — only lowercase alphanumeric + hyphen.
 # All real Bitovi topic slugs already conform; non-conforming slugs are dropped at extraction.
 _SLUG_RE = re.compile(r"^[a-z0-9-]+$")
-
-
-def _recover_jsonld_field(soup: BeautifulSoup, pattern: re.Pattern[str]) -> str:
-    """Scan all JSON-LD ``<script>`` blocks for the first match of ``pattern``.
-
-    Iterates blocks in document order and returns ``pattern.search(raw).group(1)``
-    for the first matching block, or ``""`` if no block matches.
-
-    This shared helper powers both :func:`_recover_date_published` and
-    :func:`_recover_author` — the scanning logic is identical; only the
-    compiled pattern differs.
-
-    Args:
-        soup: Parsed page soup.
-        pattern: Compiled regex with one capturing group for the desired value.
-
-    Returns:
-        The first captured value across all JSON-LD blocks, or ``""`` if absent.
-    """
-    for script in soup.find_all("script", type="application/ld+json"):
-        raw = script.string or ""
-        match = pattern.search(raw)
-        if match:
-            return match.group(1)
-    return ""
-
-
-def _recover_date_published(soup: BeautifulSoup) -> str:
-    """Scan all JSON-LD blocks for ``datePublished`` via regex.
-
-    Used as a fallback when :func:`extract_metadata` returns an empty
-    ``published_at``.  Handles two distinct failure modes:
-
-    1. **Malformed JSON-LD**: an unescaped ``"`` inside a field value (common
-       in Bitovi's ``headline``) makes ``json.loads`` throw, so the whole block
-       is discarded — but the date string is present in the raw source text.
-    2. **URL-mismatch**: the URL-matched ``BlogPosting`` lacks ``datePublished``
-       while another block on the same page (e.g. a related post or alternate
-       representation) carries it.
-
-    Scans block-by-block in document order and returns the first match, so the
-    primary article's date (typically block 0 or 1) is preferred.
-
-    Args:
-        soup: Parsed page soup.
-
-    Returns:
-        The first ``datePublished`` value found in any JSON-LD block, or ``""``
-        if none is present.
-    """
-    return _recover_jsonld_field(soup, _DATE_PUBLISHED_RE)
-
-
-def _recover_author(soup: BeautifulSoup) -> str:
-    """Scan all JSON-LD blocks for the ``author.name`` field via regex.
-
-    Used as a fallback when :func:`extract_metadata` returns an empty ``author``.
-    Handles the same failure modes as :func:`_recover_date_published`:
-
-    1. **Malformed JSON-LD**: unescaped ``"`` in ``headline`` causes ``json.loads``
-       to throw and the block is discarded — but the author object is still present
-       in the raw source text.
-    2. **URL-mismatch**: the URL-matched ``BlogPosting`` lacks an ``author`` field
-       while another block on the same page carries it.
-
-    Args:
-        soup: Parsed page soup.
-
-    Returns:
-        The first ``author.name`` value found in any JSON-LD block, or ``""``
-        if none is present.
-    """
-    return _recover_jsonld_field(soup, _AUTHOR_NAME_RE)
 
 
 # ---------------------------------------------------------------------------

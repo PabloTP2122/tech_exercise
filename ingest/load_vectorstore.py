@@ -37,8 +37,6 @@ _METADATA_COLUMNS: list[Column] = [
 # Public: shared by ingest (DDL) AND agent/graph.py (query-time store) so
 # both sides hydrate the same typed columns — DRY single source of truth.
 METADATA_COLUMN_NAMES: list[str] = [c.name for c in _METADATA_COLUMNS]
-# Internal alias kept for backward compatibility with existing call-sites.
-_METADATA_COLUMN_NAMES = METADATA_COLUMN_NAMES
 
 logger = logging.getLogger(__name__)
 
@@ -181,7 +179,7 @@ def _build_vector_store(pg_engine: PGEngine, settings: Settings) -> PGVectorStor
         engine=pg_engine,
         embedding_service=embeddings,
         table_name=settings.collection_name,
-        metadata_columns=_METADATA_COLUMN_NAMES,
+        metadata_columns=METADATA_COLUMN_NAMES,
     )
 
 

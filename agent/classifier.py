@@ -14,59 +14,28 @@ classify(question, *, known_slugs=None) -> QueryClassification
 import difflib
 import logging
 import re
-from typing import Any, Literal
+from typing import Any
 
 import sqlalchemy as sa
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel
 
+from agent.classification_rules import REGEX_RULES, STOPWORD_SLUGS, QueryType
 from api.config import get_settings
 from ingest.catalog_db import list_category_slugs
 from ingest.load_vectorstore import wrap_as_data
 
 logger = logging.getLogger(__name__)
 
-QueryType = Literal["semantic_qa", "enumeration", "count", "recency"]
+__all__ = ["QueryClassification", "QueryType", "classify"]
 
 # ADR-0008 S6: max chars passed to the LLM fallback (deterministic steps run on full question).
 _QUESTION_MAX_LEN = 500
 
-# Slugs that are also common English words and must never be matched by the fuzzy pass alone.
-# Without this guard, "about" (a real topic slug) matches the preposition in "articles about AI",
-# and Pass-2 difflib matches stopword "does" to "donejs" at cutoff 0.8.
-_STOPWORD_SLUGS: frozenset[str] = frozenset(
-    {
-        "about",
-        "blog",
-        "all",
-        "does",
-        "what",
-        "how",
-        "the",
-        "is",
-        "are",
-        "post",
-        "posts",
-        "article",
-        "articles",
-        "any",
-        "with",
-        "for",
-    }
-)
-
-# Ordered regex rules — first match wins; default is semantic_qa.
-_REGEX_RULES: list[tuple[re.Pattern[str], QueryType]] = [
-    (re.compile(r"\b(how many|number of|count)\b", re.IGNORECASE), "count"),
-    (re.compile(r"\b(latest|newest|most recent)\b", re.IGNORECASE), "recency"),
-    (
-        re.compile(
-            r"\b(show me all|list all|list|which articles|what articles|all articles)\b",
-            re.IGNORECASE,
-        ),
-        "enumeration",
-    ),
-]
+# Declarative routing tables — see agent/classification_rules.py for the data
+# (and the per-rule ``why`` documentation).
+_STOPWORD_SLUGS = STOPWORD_SLUGS
+_REGEX_RULES = REGEX_RULES
 
 
 class QueryClassification(BaseModel):
@@ -94,9 +63,9 @@ def _regex_query_type(q: str) -> QueryType:
     Returns:
         The first matching :data:`QueryType`, or ``"semantic_qa"`` if none match.
     """
-    for pattern, qtype in _REGEX_RULES:
-        if pattern.search(q):
-            return qtype
+    for rule in _REGEX_RULES:
+        if rule.pattern.search(q):
+            return rule.query_type
     return "semantic_qa"
 
 
