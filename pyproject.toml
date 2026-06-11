@@ -56,5 +56,6 @@ asyncio_mode = "auto"
 markers = [
     "live: hits the network / real Bitovi feed (deselected by default)",
     "api_live: hits the live DB for API integration tests (deselected by default)",
+    "golden_live: full-stack golden queries — live DB + OpenAI (deselected by default)",
 ]
-addopts = "-m 'not live and not api_live'"
+addopts = "-m 'not live and not api_live and not golden_live'"
