@@ -17,6 +17,8 @@ class AskRequest(BaseModel):
         stripped = v.strip()
         if not stripped:
             raise ValueError("question must not be blank")
+        if len(stripped) > 500:
+            raise ValueError("question must be 500 characters or fewer")
         return stripped
 
 

@@ -70,6 +70,33 @@ class TestAskEndpoint:
         resp = offline_client.post("/ask", json={"question": "   "})
         assert resp.status_code == 422
 
+    def test_question_over_500_chars_returns_422(self, offline_client: TestClient) -> None:
+        resp = offline_client.post("/ask", json={"question": "a" * 501})
+        assert resp.status_code == 422
+
+    def test_cache_hit_returns_same_response(self, offline_client: TestClient) -> None:
+        import api.main as main_module
+
+        main_module._cache.clear()
+        q = "What tools for E2E testing?"
+        r1 = offline_client.post("/ask", json={"question": q})
+        r2 = offline_client.post("/ask", json={"question": q})
+        assert r1.json() == r2.json()
+
+    def test_recency_not_cached(self, offline_client: TestClient, fake_graph: Any) -> None:
+        import api.main as main_module
+
+        main_module._cache.clear()
+        fake_graph.ainvoke = AsyncMock(
+            return_value={
+                "answer": "Latest post.",
+                "sources": [],
+                "query_type": "recency",
+            }
+        )
+        offline_client.post("/ask", json={"question": "latest post?"})
+        assert "latest post?" not in main_module._cache
+
 
 # ---------------------------------------------------------------------------
 # /health — offline

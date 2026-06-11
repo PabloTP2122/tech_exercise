@@ -6,9 +6,10 @@ Import-time opens no DB connection — all I/O lives inside lifespan.
 
 from __future__ import annotations
 
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Annotated, Any, cast
+from typing import Annotated, Any, NamedTuple, cast
 
 import sqlalchemy as sa
 from fastapi import Depends, FastAPI, Request
@@ -33,6 +34,29 @@ def _client_ip(request: Request) -> str:
 
 
 limiter = Limiter(key_func=_client_ip)
+
+_CACHE_TTL = 3600  # seconds — recency excluded; others safe to cache for 1 h
+_SKIP_CACHE = {"recency"}
+
+
+class _Entry(NamedTuple):
+    response: AskResponse
+    expires_at: float
+
+
+_cache: dict[str, _Entry] = {}
+
+
+def _cached(question: str) -> AskResponse | None:
+    entry = _cache.get(question)
+    if entry and time.monotonic() < entry.expires_at:
+        return entry.response
+    return None
+
+
+def _store(question: str, response: AskResponse) -> None:
+    if response.query_type not in _SKIP_CACHE:
+        _cache[question] = _Entry(response, time.monotonic() + _CACHE_TTL)
 
 
 @asynccontextmanager
@@ -78,12 +102,16 @@ EngineDep = Annotated[sa.Engine, Depends(get_engine)]
 @app.post("/ask", response_model=AskResponse)
 @limiter.limit("10/minute")
 async def ask(request: Request, req: AskRequest, graph: GraphDep) -> AskResponse:
+    if cached := _cached(req.question):
+        return cached
     result = await graph.ainvoke({"question": req.question})
-    return AskResponse(
+    response = AskResponse(
         answer=result["answer"],
         sources=[SourceRef(**s) for s in result.get("sources", [])],
         query_type=result["query_type"],
     )
+    _store(req.question, response)
+    return response
 
 
 @app.get("/health", response_model=HealthResponse)
