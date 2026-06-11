@@ -122,7 +122,14 @@ def build_graph(
     slugs = known_slugs if known_slugs is not None else list_category_slugs(engine)
 
     # --- node factories ---
-    retrieve_node = make_retrieve_node(vector_store)
+    retrieve_node = make_retrieve_node(
+        vector_store,
+        engine=engine,
+        table_name=settings.collection_name,
+        top_k=settings.retrieval_top_k,
+        keyword_k=settings.keyword_top_k,
+        max_per_article=settings.max_chunks_per_article,
+    )
     generate_node = make_generate_node(llm)
     no_match_node = make_no_match_node()
     sql_count_node = make_sql_count_node(engine)

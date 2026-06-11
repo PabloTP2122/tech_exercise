@@ -99,6 +99,54 @@ class TestMakeRetrieveNode:
         node(_state(question="E2E testing tools"))
         vs.similarity_search_with_relevance_scores.assert_called_once_with("E2E testing tools", k=4)
 
+    def test_top_k_is_configurable(self) -> None:
+        vs = MagicMock()
+        vs.similarity_search_with_relevance_scores.return_value = []
+        node = make_retrieve_node(vs, top_k=7)
+        node(_state(question="E2E testing tools"))
+        vs.similarity_search_with_relevance_scores.assert_called_once_with("E2E testing tools", k=7)
+
+    def test_hybrid_fuses_keyword_docs_but_scores_stay_vector_only(self) -> None:
+        """Keyword hits enrich docs; scores stay vector-only (no-match invariant)."""
+        vec_doc = _doc(url="https://www.bitovi.com/blog/vec")
+        vs = MagicMock()
+        vs.similarity_search_with_relevance_scores.return_value = [(vec_doc, 0.9)]
+        kw_doc = Document(
+            id="kw-1",
+            page_content="keyword chunk",
+            metadata={"source_url": "https://www.bitovi.com/blog/kw", "title": "KW"},
+        )
+        with patch(
+            "agent.nodes.semantic_qa.keyword_search_chunks", return_value=[kw_doc]
+        ) as kw_mock:
+            node = make_retrieve_node(vs, engine=MagicMock(spec=sa.Engine))
+            result = node(_state(question="E2E testing tools"))
+        kw_mock.assert_called_once()
+        urls = {d.metadata["source_url"] for d in result["docs"]}
+        assert urls == {"https://www.bitovi.com/blog/vec", "https://www.bitovi.com/blog/kw"}
+        assert result["scores"] == [0.9]
+
+    def test_keyword_k_zero_disables_hybrid(self) -> None:
+        vs = MagicMock()
+        vs.similarity_search_with_relevance_scores.return_value = []
+        with patch("agent.nodes.semantic_qa.keyword_search_chunks") as kw_mock:
+            node = make_retrieve_node(vs, engine=MagicMock(spec=sa.Engine), keyword_k=0)
+            node(_state())
+        kw_mock.assert_not_called()
+
+    def test_dedupe_caps_chunks_per_article(self) -> None:
+        url = "https://www.bitovi.com/blog/big"
+        docs = [
+            Document(page_content=f"chunk {i}", metadata={"source_url": url, "title": "Big"})
+            for i in range(4)
+        ]
+        vs = MagicMock()
+        vs.similarity_search_with_relevance_scores.return_value = [(d, 0.9) for d in docs]
+        node = make_retrieve_node(vs, max_per_article=2)
+        result = node(_state())
+        assert len(result["docs"]) == 2
+        assert len(result["scores"]) == 4  # scores untouched by dedupe
+
 
 # ---------------------------------------------------------------------------
 # relevance gate

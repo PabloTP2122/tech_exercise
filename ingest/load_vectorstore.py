@@ -183,6 +183,32 @@ def _build_vector_store(pg_engine: PGEngine, settings: Settings) -> PGVectorStor
     )
 
 
+def ensure_fts_index(sync_engine: sa.Engine, table_name: str) -> None:
+    """Create the GIN full-text index over chunk content (idempotent).
+
+    Powers the keyword half of hybrid retrieval (agent/retrieval.py).  The
+    expression must textually match the query expression so the planner can
+    use the index.  At the current corpus size (~3.5k chunks) a seq scan is
+    already milliseconds — the index is insurance, not a requirement — so any
+    failure (e.g. read-only DB user) is logged and swallowed.
+
+    Args:
+        sync_engine: SQLAlchemy sync engine.
+        table_name: Chunks table name (internal settings constant).
+    """
+    try:
+        with sync_engine.begin() as conn:
+            # table_name is an internal constant from Settings — not user input.
+            conn.execute(
+                sa.text(
+                    f"CREATE INDEX IF NOT EXISTS idx_{table_name}_content_fts"
+                    f" ON {table_name} USING GIN (to_tsvector('english', content))"
+                )
+            )
+    except Exception:
+        logger.warning("ensure_fts_index: could not create FTS index on %s", table_name)
+
+
 def main(*, force: bool = False) -> None:
     """Chunk, embed, and persist articles to pgvector.
 
@@ -247,6 +273,8 @@ def main(*, force: bool = False) -> None:
             -(-len(chunks) // _BATCH_SIZE),  # ceiling division
             len(batch),
         )
+
+    ensure_fts_index(sync_engine, settings.collection_name)
 
     elapsed = time.monotonic() - t0
     logger.info(

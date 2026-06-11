@@ -18,12 +18,14 @@ from agent.graph import build_graph
 from api.config import get_settings
 from api.models import AskRequest, AskResponse, HealthResponse, SourceRef
 from ingest.catalog_db import get_article_count
+from ingest.load_vectorstore import ensure_fts_index
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     engine = sa.create_engine(settings.database_url)
+    ensure_fts_index(engine, settings.collection_name)  # idempotent; logs and skips on failure
     app.state.engine = engine
     app.state.graph = build_graph(engine=engine).compile()
     yield
