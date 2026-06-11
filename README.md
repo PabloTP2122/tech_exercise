@@ -47,10 +47,11 @@ INGEST (offline)
               → PostgreSQL chunks table    (pgvector, cosine)
 
 AGENT (per query, LangGraph StateGraph)
-  classify_query  →  ┌ semantic_qa → similarity search (k=4) → generate (LLM)
-                     ├ enumeration → SQL articles WHERE categories ILIKE
-                     ├ count       → SQL COUNT(*) WHERE categories ILIKE
-                     └ recency     → SQL ORDER BY published_at + RSS overlay
+  classify_query  →  ┌ semantic_qa → hybrid retrieval (vector top-k + keyword
+                     │               full-text, RRF-fused, deduped) → generate (LLM)
+                     ├ enumeration → SQL articles WHERE categories ILIKE [AND year range]
+                     ├ count       → SQL COUNT(*) WHERE categories ILIKE [AND year range]
+                     └ recency     → SQL ORDER BY published_at ASC|DESC + RSS overlay
                                   →  grounded answer with source citations
 
 SERVE
@@ -58,6 +59,76 @@ SERVE
   Next.js  App Router + Hono /api/* proxy    (port 3000)
            → proxies questions to FastAPI /ask
 ```
+
+---
+
+## A request, step by step
+
+What happens when you type **"How many articles does Bitovi have about AI?"** in the UI:
+
+1. The Next.js page POSTs to its Hono proxy (`frontend/app/api/[[...route]]/route.ts`), which forwards to FastAPI `POST /ask` (`api/main.py`).
+2. The compiled LangGraph runs `classify` (`agent/classifier.py`): the ordered regex table in `agent/classification_rules.py` matches `how many` → `count` (zero LLM calls), and the fuzzy slug pass matches `ai`. Slots like a year filter or recency direction are extracted here too.
+3. `route_query` (`agent/routes/route.py`) sends the state to the `sql_count` node (`agent/nodes/catalog.py`), which runs `SELECT COUNT(DISTINCT source_url) … WHERE categories ILIKE ',ai,'` against the `articles` catalog — no chunks, no LLM, no way to hallucinate a number.
+4. The node renders a deterministic sentence (`agent/prompts.py:render_count`) and attaches the topic-page URL as the reference link.
+5. FastAPI returns `{answer, sources, query_type}`; the UI renders the answer and one reference card per source.
+
+The only path that calls the LLM is `semantic_qa`: hybrid retrieval (`agent/retrieval.py` + pgvector) → relevance gate (below `SIMILARITY_THRESHOLD` → canonical "I couldn't find…" with no sources) → generate with structured output, whose cited URLs are whitelisted against the retrieved docs.
+
+## An article, step by step
+
+How a blog post becomes searchable (`make ingest`, one-time):
+
+1. **Discover** (`ingest/discovery.py`) — sitemap + paginator cross-check yields ~462 article URLs.
+2. **Fetch** (`ingest/fetcher.py`) — polite HTTP (2 req/s).
+3. **Extract** (`ingest/extract.py`) — title/author/date from JSON-LD with OpenGraph/HTML fallbacks (regex recovery for malformed JSON-LD lives in `ingest/recover.py`); categories from `/blog/topic/` links.
+4. **Clean** (`ingest/clean.py`) — HTML → Markdown, nav/footer stripped.
+5. **Chunk + embed** (`ingest/load_vectorstore.py`) — 800-char chunks with 100 overlap; each chunk gets a contextual header and `<DATA_SOURCE>` delimiters, then is embedded into the pgvector `chunks` table. A chunk as embedded literally looks like:
+
+   ```
+   Page Title · ,react,devops, · https://www.bitovi.com/blog/page-slug
+
+   <DATA_SOURCE>
+   …chunk body in markdown…
+   </DATA_SOURCE>
+   ```
+
+6. **Catalog** (`ingest/catalog_db.py`) — one row per article (`title`, `source_url`, `published_at`, `categories`) powering the count/enumeration/recency SQL routes.
+
+## Glossary
+
+| Term | Meaning |
+|---|---|
+| **Chunk** | One 800-char slice of an article (100-char overlap), prefixed with a contextual header so it stays self-describing in isolation |
+| **Vector-view** | The exact strings the embedder receives — inspectable without paying for embeddings via `make eyeball-all` |
+| **Query type** | One of 4 routes: `semantic_qa` (LLM), `count`, `enumeration`, `recency` (all SQL, no LLM) |
+| **Slot** | A value the classifier extracts alongside the route: category slug, year, recency direction/limit |
+| **Relevance gate** | Conditional edge: if no retrieved chunk scores ≥ `SIMILARITY_THRESHOLD`, answer the canonical no-match sentence instead of calling the LLM |
+| **Hybrid retrieval / RRF** | Vector similarity + Postgres full-text search, merged with Reciprocal Rank Fusion; keyword hits enrich context but never open the relevance gate |
+| **Stopword slug** | A topic slug that is also a common English word ("about", "does") — guarded so it can't be matched by accident |
+| **Reference-link parity** | Invariant: every answer (including counts and empty results) ships ≥ 1 `{title, url}` source for the UI |
+| **No-match response** | The exact sentence "I couldn't find information about that in the blog." — shared constant, returned with zero sources |
+
+## Where to start reading
+
+| If you want to… | Start at |
+|---|---|
+| Follow a question through the system | `agent/graph.py` (`build_graph`) |
+| Add or tune a routing rule | `agent/classification_rules.py` (data-only table with a `why` per rule) |
+| Change how answers are worded | `agent/prompts.py` (deterministic renderers + the one LLM prompt) |
+| Touch retrieval quality | `agent/retrieval.py` + `agent/nodes/semantic_qa.py` |
+| Change what gets ingested | `ingest/load_vectorstore.py` (`main`) |
+| See what the agent promises to answer | `tests/golden_queries.py` |
+
+## Troubleshooting
+
+| Symptom | Likely cause / fix |
+|---|---|
+| Every answer is "I couldn't find information…" | DB is empty — run `make db-up` then `make ingest` |
+| `curl /ask` connection refused | API not running (`make dev`) or DB container down (`make db-up`) |
+| Counts return 0 for a real topic | Slug mismatch — check `SELECT DISTINCT categories FROM articles`; the classifier only matches discovered slugs |
+| "Latest post" looks stale | RSS overlay unreachable (it fails silently to SQL); re-run `make ingest` to refresh the catalog |
+| Want to rule hybrid search in/out of a regression | Set `KEYWORD_TOP_K=0` to fall back to pure vector retrieval |
+| Want an end-to-end quality signal | `make golden` runs the golden-query harness against the live stack |
 
 ---
 
@@ -71,6 +142,15 @@ The brief's four example queries — paste any into the UI or `curl` them direct
 | `"Can you show me all Bitovi articles about DevOps?"` | `enumeration` |
 | `"How many articles does Bitovi have about AI?"` | `count` |
 | `"What kind of tools does Bitovi recommend for E2E testing?"` | `semantic_qa` |
+
+Edge cases that are also answered deterministically:
+
+| Query | Routes to |
+|---|---|
+| `"What was Bitovi's first blog post?"` | `recency` (oldest direction) |
+| `"Show me the last 5 posts"` | `recency` (parsed item count, capped at 10) |
+| `"How many articles did Bitovi publish in 2023?"` | `count` (year filter) |
+| `"Show me all articles from 2023"` | `enumeration` (year filter) |
 
 ---
 
@@ -124,6 +204,11 @@ curl -X POST http://localhost:8000/ask \
 | `LLM_MODEL` | | `gpt-4o-mini` | Generation model |
 | `CLASSIFIER_MODEL` | | `gpt-4o-mini` | Query classification model |
 | `EMBEDDING_MODEL` | | `text-embedding-3-small` | Embedding model |
+| `SIMILARITY_THRESHOLD` | | `0.35` | Relevance gate floor (0–1); below it the agent answers "I couldn't find…" |
+| `RETRIEVAL_TOP_K` | | `4` | Vector hits fetched per semantic question |
+| `KEYWORD_TOP_K` | | `4` | Full-text hits fused via RRF; set `0` to disable hybrid search |
+| `MAX_CHUNKS_PER_ARTICLE` | | `2` | Context-diversity cap applied after fusion |
+| `CORS_ALLOW_ORIGINS` | | `http://localhost:3000,…` | Comma-separated allowed origins (set at deploy time) |
 | `LANGCHAIN_API_KEY` | | — | (Optional) LangSmith tracing for `make studio` |
 
 ### Frontend (`frontend/.env`)
@@ -147,9 +232,10 @@ make ingest        # fetch, embed, and load the Bitovi blog into pgvector
 make load          # force rebuild: drop table + re-embed from scratch
 make dev           # run the FastAPI server (port 8000)
 make studio        # LangGraph Studio — live routing-topology visualizer (requires db-up + API key)
-make test          # run the test suite (312 tests)
+make test          # run the offline test suite (395 tests)
 make test-live     # live network tests against the real Bitovi RSS feed
 make test-api      # API integration tests (live DB, no LLM — requires db-up)
+make golden        # golden-query harness end-to-end (live DB + OpenAI — requires db-up)
 make check         # lint + format-check + typecheck + test (full gate)
 make clean         # remove Python caches + stop containers and wipe DB volume
 ```
@@ -165,6 +251,8 @@ make clean         # remove Python caches + stop containers and wipe DB volume
 5. **Vocabulary-normalized classification** — the classifier maps user wording (e.g. "Agile") to the actual category slug (`project-management`) so metadata filters don't silently miss.
 6. **Context-preserving chunking** — 100-token overlap prevents losing answers that straddle a chunk boundary.
 7. **Live recency** — recency queries read the blog's RSS feed at query time, reflecting current state, not the last ingest.
+8. **Hybrid retrieval** — Postgres full-text search catches exact terms ("Cypress", "E2E") that embeddings can blur; results are RRF-fused with the vector ranking, and a per-article cap keeps the context diverse. Keyword hits never bypass the relevance gate, so the no-hallucination fallback is unaffected.
+9. **Golden-query harness** — `tests/golden_queries.py` pins the routes, sources, and key phrases for 14 representative questions (including a known-negative); the routing tier runs in every `make check`, the end-to-end tier via `make golden`.
 
 ---
 
@@ -228,7 +316,7 @@ section (clean Markdown-rendered answers with no raw timestamps or HTML entities
 - **Category slug list is auto-discovered** at classifier startup (`SELECT DISTINCT categories FROM articles`) — no hardcoded list required.
 - **RSS feeds cap at ~10 items per feed** — used as a freshness overlay only; the SQL base covers the full article history.
 - **No conversational memory** — each question is answered independently, by design (requirements: memory not necessary).
-- **No automated RAG evaluation** — RAGAS metrics (faithfulness, context recall, answer relevancy) are the natural next step but not implemented.
+- **Evaluation is assertion-based, not metric-based** — the golden-query harness (`make golden`) asserts routes, sources, and key phrases end-to-end; RAGAS-style metrics (faithfulness, context recall) remain the natural next step.
 
 ---
 
@@ -243,14 +331,15 @@ section (clean Markdown-rendered answers with no raw timestamps or HTML entities
 ## Project Structure
 
 ```
-ingest/    discovery.py · fetcher.py · extract.py · clean.py   # SRP scraper pipeline
+ingest/    discovery.py · fetcher.py · extract.py · recover.py · clean.py  # SRP scraper pipeline
            loader.py · load_vectorstore.py · catalog_db.py      # orchestration + DB
-agent/     graph.py · classifier.py · rss.py · prompts.py       # LangGraph routing agent
+agent/     graph.py · classifier.py · classification_rules.py   # LangGraph routing agent
+           retrieval.py · rss.py · prompts.py                   # hybrid search + rendering
            nodes/  semantic_qa.py · catalog.py · recency.py     # terminal answer nodes
 api/       main.py · config.py · models.py                      # FastAPI surface
 frontend/  Next.js 16 App Router + React 19 chat UI
            app/api/[[...route]]/route.ts                        # Hono proxy → FastAPI /ask
-tests/     312 offline + live tests (pytest)
+tests/     395 offline + live tests (pytest) · golden_queries.py  # incl. golden-query harness
 Dockerfile · docker-compose.yml · render.yaml                   # containerisation + Render deploy
 ```
 
@@ -271,5 +360,5 @@ Next.js 16 · Hono · React 19 · SWR · Tailwind v4 · react-markdown
 make check
 ```
 
-Runs ruff (lint), ruff (format check), mypy (strict typing), and pytest (308 tests). The same checks
-run on every commit via pre-commit hooks.
+Runs ruff (lint), ruff (format check), mypy (strict typing), and pytest (395 offline tests). The same
+checks run on every commit via pre-commit hooks.
