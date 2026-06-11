@@ -7,20 +7,24 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     openai_api_key: SecretStr
     blog_base_url: str = "https://www.bitovi.com"
-    database_url: str = "postgresql+psycopg://rag:rag@localhost:5432/blog_rag"
+    database_url: str
 
     @field_validator("database_url", mode="before")
     @classmethod
     def normalize_db_scheme(cls, v: object) -> object:
-        if isinstance(v, str) and v.startswith("postgres://"):
-            return "postgresql+psycopg://" + v[len("postgres://") :]
+        if isinstance(v, str):
+            if v.startswith("postgres://"):
+                return "postgresql+psycopg://" + v[len("postgres://") :]
+            if v.startswith("postgresql://"):
+                return "postgresql+psycopg://" + v[len("postgresql://") :]
         return v
 
     collection_name: str = "chunks"
     llm_model: str = "gpt-4o-mini"
     classifier_model: str = "gpt-4o-mini"
     embedding_model: str = "text-embedding-3-small"
-    similarity_threshold: float = 0.35  # relevance floor (0..1, higher=better); tune via .env
+    # relevance floor (0..1, higher=better); tune via .env
+    similarity_threshold: float = 0.35
     cors_allow_origins: str = "http://localhost:3000,http://localhost:4200"
     # Comma-separated list of allowed CORS origins.  Override at deploy time via env:
     #   CORS_ALLOW_ORIGINS=https://your-app.vercel.app,http://localhost:3000
