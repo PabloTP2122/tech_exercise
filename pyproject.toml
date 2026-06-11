@@ -20,6 +20,7 @@ dependencies = [
     "lxml",
     "requests",
     "pydantic-settings",
+    "slowapi",
 ]
 
 [project.optional-dependencies]

@@ -13,11 +13,26 @@ from typing import Annotated, Any, cast
 import sqlalchemy as sa
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from slowapi import Limiter
+from slowapi.errors import RateLimitExceeded
 
 from agent.graph import build_graph
 from api.config import get_settings
 from api.models import AskRequest, AskResponse, HealthResponse, SourceRef
 from ingest.catalog_db import get_article_count
+
+
+def _client_ip(request: Request) -> str:
+    # Render (and most proxies) set X-Forwarded-For to the real client IP.
+    # Fall back to the direct TCP peer when running locally without a proxy.
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+limiter = Limiter(key_func=_client_ip)
 
 
 @asynccontextmanager
@@ -30,7 +45,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     engine.dispose()
 
 
+async def _rate_limit_handler(request: Request, exc: Exception) -> JSONResponse:
+    return JSONResponse(
+        status_code=429,
+        content={"detail": "Rate limit exceeded. Try again in a moment."},
+    )
+
+
 app = FastAPI(lifespan=lifespan)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_handler)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[o.strip() for o in get_settings().cors_allow_origins.split(",") if o.strip()],
@@ -52,7 +76,8 @@ EngineDep = Annotated[sa.Engine, Depends(get_engine)]
 
 
 @app.post("/ask", response_model=AskResponse)
-async def ask(req: AskRequest, graph: GraphDep) -> AskResponse:
+@limiter.limit("10/minute")
+async def ask(request: Request, req: AskRequest, graph: GraphDep) -> AskResponse:
     result = await graph.ainvoke({"question": req.question})
     return AskResponse(
         answer=result["answer"],
