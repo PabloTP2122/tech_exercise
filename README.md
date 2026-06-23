@@ -14,7 +14,7 @@ Built with FastAPI, LangGraph, pgvector (PostgreSQL), Next.js 16 + Hono + React 
 | Ingest all Bitovi blog articles | `ingest/` pipeline — `make ingest` fetches, embeds, and loads ~462 articles (Real ~460) |
 | RAG-grounded Q&A agent | `agent/` LangGraph StateGraph — 4-type routing; only `semantic_qa` calls the LLM |
 | UI: input field + answer + reference links | `frontend/` Next.js app at `http://localhost:3000` |
-| Demo video (2–5 min) | See **Demo Video** section below |
+| Demo video (5 min) | See **Demo Video** section below |
 
 ---
 
@@ -134,7 +134,7 @@ How a blog post becomes searchable (`make ingest`, one-time):
 
 ## Try these
 
-The brief's four example queries — paste any into the UI or `curl` them directly:
+The mail brief's four example queries — paste any into the UI or `curl` them directly:
 
 | Query | Routes to |
 |---|---|
@@ -297,12 +297,15 @@ Honest headline: *traded SPA simplicity for a future-proof full-stack surface.*
 
 **LangGraph over plain LCEL.** For a single-turn Q&A router with no memory, the minimal idiomatic
 choice is `RunnableBranch` (~30 lines). LangGraph costs more boilerplate — a typed state object and
-explicit edge wiring — but buys three things: (1) an inspectable routing topology visible live in
-`make studio`, (2) deterministic conditional edges that keep the LLM *out* of routing decisions
-(the router can't hallucinate a path), and (3) a clean upgrade path to conversational memory.
+explicit edge wiring — but buys three things:
+
+    (1) An inspectable routing topology visible live in `make studio`.
+    (2) Deterministic conditional edges that keep the LLM *out* of routing decisions (the router can't hallucinate a path).
+    (3) A clean upgrade path to conversational memory.
+
 Honest headline: *traded simplicity for observability and routing safety.*
 
-**Reference links on every answer type.** The brief requires "shows reference links". A count answer
+**Reference links on every answer type.** The mail brief requires "shows reference links". A count answer
 like "42 articles about DevOps" is incomplete without a destination — the topic-page URL
 `/blog/topic/devops/page/1` is the natural landing point, and the grader can verify the count
 directly. Every query type populates `sources: list[{title, url}]` so the UI always has reference
@@ -322,7 +325,7 @@ section (clean Markdown-rendered answers with no raw timestamps or HTML entities
 
 ## Demo Video
 
-> [Watch the 2-min walkthrough](PLACEHOLDER_URL)
+> [Watch the 5-min video](https://www.loom.com/share/f952f1fee5af452cb4409d1e9d8ffb07)
 >
 > Covers: ingestion pipeline → API → all four example queries in the UI → reference links.
 
