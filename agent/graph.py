@@ -53,6 +53,9 @@ class AgentState(TypedDict):
     question: str
     query_type: Literal["semantic_qa", "enumeration", "count", "recency"]
     category_slug: str | None
+    recency_direction: Literal["newest", "oldest"]  # recency only
+    recency_limit: int  # recency only ("last 5 posts" → 5)
+    year: int | None  # count/enumeration only ("articles from 2023" → 2023)
     docs: list[Document]
     scores: list[float]
     answer: str
@@ -122,7 +125,14 @@ def build_graph(
     slugs = known_slugs if known_slugs is not None else list_category_slugs(engine)
 
     # --- node factories ---
-    retrieve_node = make_retrieve_node(vector_store)
+    retrieve_node = make_retrieve_node(
+        vector_store,
+        engine=engine,
+        table_name=settings.collection_name,
+        top_k=settings.retrieval_top_k,
+        keyword_k=settings.keyword_top_k,
+        max_per_article=settings.max_chunks_per_article,
+    )
     generate_node = make_generate_node(llm)
     no_match_node = make_no_match_node()
     sql_count_node = make_sql_count_node(engine)
@@ -136,6 +146,9 @@ def build_graph(
         return {
             "query_type": result.query_type,
             "category_slug": result.category_slug,
+            "recency_direction": result.recency_direction,
+            "recency_limit": result.recency_limit,
+            "year": result.year,
             "docs": [],
             "scores": [],
             "answer": "",

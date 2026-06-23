@@ -17,6 +17,7 @@ import sqlalchemy as sa
 
 from agent.prompts import render_recency
 from agent.rss import fetch_recent
+from api.config import get_settings
 from ingest.catalog_db import _parse_published_at, get_recent_articles
 from ingest.clean import clean_title
 
@@ -64,7 +65,8 @@ def make_hybrid_recency_node(engine: sa.Engine) -> Callable[[dict[str, Any]], di
 
     SQL base is always authoritative.  RSS overlay wins only when the live
     RSS feed contains an item strictly newer than the SQL top-1 row
-    (ADR-0004 §3).
+    (ADR-0004 §3).  For ``oldest`` direction the RSS overlay is skipped
+    entirely — feeds only carry the newest items.
 
     Sources are populated from the winning items so the UI always has at
     least one reference link (brief requirement: "shows reference links").
@@ -72,8 +74,10 @@ def make_hybrid_recency_node(engine: sa.Engine) -> Callable[[dict[str, Any]], di
 
     def hybrid_recency(state: dict[str, Any]) -> dict[str, Any]:
         slug: str | None = state.get("category_slug")
-        sql_rows = get_recent_articles(engine, limit=3)
-        rss_items = fetch_recent(slug, limit=3)
+        oldest: bool = state.get("recency_direction") == "oldest"
+        limit: int = state.get("recency_limit") or 3
+        sql_rows = get_recent_articles(engine, limit=limit, oldest=oldest, slug=slug)
+        rss_items = [] if oldest else fetch_recent(slug, limit=limit)
 
         use_rss = False
         if rss_items and sql_rows:
@@ -105,6 +109,18 @@ def make_hybrid_recency_node(engine: sa.Engine) -> Callable[[dict[str, Any]], di
             ]
 
         sources = [{"title": it["title"], "url": it["url"]} for it in items if it["url"]]
-        return {"answer": render_recency(items), "sources": sources}
+        if not sources:
+            # Reference-link parity: even an empty result ships one link.
+            base = get_settings().blog_base_url.rstrip("/")
+            if slug:
+                sources = [
+                    {
+                        "title": f"All Bitovi articles about {slug}",
+                        "url": f"{base}/blog/topic/{slug}/page/1",
+                    }
+                ]
+            else:
+                sources = [{"title": "Bitovi Blog", "url": f"{base}/blog"}]
+        return {"answer": render_recency(items, oldest=oldest), "sources": sources}
 
     return hybrid_recency

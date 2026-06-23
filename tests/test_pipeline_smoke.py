@@ -24,7 +24,8 @@ from pathlib import Path
 
 import pytest
 
-from ingest.loader import build_documents, list_article_urls
+from ingest.discovery import list_sitemap_urls
+from ingest.loader import build_documents
 from ingest.preview import emulate_vector_view
 
 # Metadata keys every document must carry (ingest pipeline contract).
@@ -50,7 +51,7 @@ def test_single_document_pipeline() -> None:
     ``tests/data/raw/test_1.json`` for human inspection.
     """
     # 1. Discover article URLs (cheap — single sitemap fetch, no body requests).
-    urls = list_article_urls()
+    urls = list_sitemap_urls()
     if not urls:
         pytest.skip("Sitemap fetch returned no URLs (offline or network error).")
 

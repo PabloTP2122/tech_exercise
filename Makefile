@@ -1,4 +1,4 @@
-.PHONY: install dev db-up db-down up down-all ingest load test test-live test-api lint format format-check typecheck check eyeball eyeball-all discover-check preflight studio clean help
+.PHONY: install dev db-up db-down up down-all ingest load test test-live test-api golden lint format format-check typecheck check eyeball eyeball-all discover-check preflight studio clean help
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
@@ -37,6 +37,9 @@ test-live: ## Run live network tests (real Bitovi feed)
 
 test-api: ## Run API integration tests (live DB, no LLM — requires db-up)
 	uv run pytest -v -m api_live
+
+golden: ## Run golden-query harness end-to-end (live DB + OPENAI_API_KEY — requires db-up)
+	uv run pytest -v -m golden_live tests/test_golden_queries.py
 
 eyeball: ## Eyeball 1-doc vector-view: fetch one article, run the pipeline, write test_1.json
 	uv run pytest tests/test_pipeline_smoke.py -v

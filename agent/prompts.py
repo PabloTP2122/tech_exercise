@@ -55,26 +55,30 @@ NO_MATCH_RESPONSE = "I couldn't find information about that in the blog."
 # ---------------------------------------------------------------------------
 
 
-def render_count(n: int, slug: str | None) -> str:
+def render_count(n: int, slug: str | None, *, year: int | None = None) -> str:
     """Return a one-sentence count reply.
 
     Args:
         n: Number of articles found.
         slug: Category slug, or ``None`` for a total-count query.
+        year: Calendar-year filter, or ``None`` when not year-scoped.
 
     Returns:
         A human-readable sentence, e.g.
-        ``"There are 42 articles about ai on the Bitovi blog."``
+        ``"There are 42 articles about ai on the Bitovi blog."`` or
+        ``"There are 17 articles published in 2023 on the Bitovi blog."``
     """
     verb = "is" if n == 1 else "are"
     noun = "article" if n == 1 else "articles"
     count_word = "no" if n == 0 else str(n)
-    if slug is None:
-        return f"There {verb} {count_word} {noun} on the Bitovi blog."
-    return f"There {verb} {count_word} {noun} about {slug} on the Bitovi blog."
+    about = f" about {slug}" if slug else ""
+    when = f" published in {year}" if year else ""
+    return f"There {verb} {count_word} {noun}{about}{when} on the Bitovi blog."
 
 
-def render_enumeration(rows: list[dict[str, str]], slug: str | None = None) -> str:
+def render_enumeration(
+    rows: list[dict[str, str]], slug: str | None = None, *, year: int | None = None
+) -> str:
     """Return a summary sentence for an enumeration response.
 
     URLs are intentionally omitted — they belong in the REFERENCES list rendered
@@ -83,6 +87,7 @@ def render_enumeration(rows: list[dict[str, str]], slug: str | None = None) -> s
     Args:
         rows: Dicts with at least ``"title"`` and ``"url"`` keys, in display order.
         slug: Category slug, or ``None`` for a general / recent-articles query.
+        year: Calendar-year filter, or ``None`` when not year-scoped.
 
     Returns:
         A one-sentence summary, or a "no articles found" message when ``rows`` is empty.
@@ -91,21 +96,25 @@ def render_enumeration(rows: list[dict[str, str]], slug: str | None = None) -> s
         return "No articles found."
     n = len(rows)
     noun = "article" if n == 1 else "articles"
-    if slug:
-        return f"I found {n} {noun} tagged {slug} in the Bitovi blog. Here is the complete list."
+    tagged = f" tagged {slug}" if slug else ""
+    when = f" published in {year}" if year else ""
+    if slug or year:
+        return f"I found {n} {noun}{tagged}{when} in the Bitovi blog. Here is the complete list."
     return f"I found {n} recent {noun} on the Bitovi blog. Here is the complete list."
 
 
-def render_recency(items: list[dict[str, str]]) -> str:
-    """Return a clean prose summary of the most recent article(s).
+def render_recency(items: list[dict[str, str]], *, oldest: bool = False) -> str:
+    """Return a clean prose summary of the most recent (or earliest) article(s).
 
     URLs are intentionally omitted — they belong in the REFERENCES list rendered
     by the frontend, not inline in the answer prose.
 
     Args:
-        items: Dicts with at least ``"title"`` and ``"date"`` keys, newest-first.
+        items: Dicts with at least ``"title"`` and ``"date"`` keys, in display
+               order (newest-first, or earliest-first when ``oldest``).
                ``"date"`` must already be a human-readable string (e.g.
                ``"May 28, 2026"``), formatted by the calling node before passing in.
+        oldest: ``True`` for "oldest/first post" wording.
 
     Returns:
         Clean prose summary, or a fallback message when ``items`` is empty.
@@ -113,10 +122,12 @@ def render_recency(items: list[dict[str, str]]) -> str:
     if not items:
         return "No recent articles found."
     first = items[0]
+    superlative = "oldest" if oldest else "most recent"
     lead = (
-        f'The most recent post on the Bitovi blog is "{first["title"]}"'
+        f'The {superlative} post on the Bitovi blog is "{first["title"]}"'
         f" (published {first['date']})."
     )
     if len(items) == 1:
         return lead
-    return f"{lead} Here are some other recent posts."
+    follower = "early" if oldest else "recent"
+    return f"{lead} Here are some other {follower} posts."

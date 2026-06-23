@@ -17,10 +17,12 @@ from langchain_core.messages import SystemMessage
 from pydantic import BaseModel
 
 from agent.prompts import NO_MATCH_RESPONSE, SEMANTIC_QA_SYSTEM_PROMPT
+from agent.retrieval import dedupe_chunks, keyword_search_chunks, rrf_fuse
 from ingest.clean import clean_title
 from ingest.load_vectorstore import wrap_as_data
 
 if TYPE_CHECKING:
+    import sqlalchemy as sa
     from langchain_core.documents import Document
     from langchain_openai import ChatOpenAI
     from langchain_postgres import PGVectorStore
@@ -36,17 +38,45 @@ class _QAResult(BaseModel):
     cited_urls: list[str] = []
 
 
-def make_retrieve_node(vector_store: PGVectorStore) -> Callable[[dict[str, Any]], dict[str, Any]]:
-    """Return a retrieve node that fetches docs + cosine scores from pgvector."""
+def make_retrieve_node(
+    vector_store: PGVectorStore,
+    *,
+    engine: sa.Engine | None = None,
+    table_name: str = "chunks",
+    top_k: int = 4,
+    keyword_k: int = 4,
+    max_per_article: int = 2,
+) -> Callable[[dict[str, Any]], dict[str, Any]]:
+    """Return a retrieve node: vector search, optional keyword fusion, dedupe.
+
+    ``state["scores"]`` stays **vector-only** so the relevance gate and the
+    no-match invariant are unaffected by hybrid search — keyword hits enrich
+    and reorder the LLM context (``state["docs"]``) but never open the gate.
+
+    Args:
+        vector_store: pgvector store for dense retrieval.
+        engine: SQLAlchemy engine for the full-text pass.  ``None`` disables
+            hybrid search (pure-vector behaviour, used by offline tests).
+        table_name: Chunks table name for the keyword SQL.
+        top_k: Dense hits fetched per question.
+        keyword_k: Full-text hits fused via RRF; ``0`` disables hybrid search.
+        max_per_article: Context-diversity cap applied after fusion.
+    """
 
     def retrieve(state: dict[str, Any]) -> dict[str, Any]:
         results: list[tuple[Document, float]] = (
-            vector_store.similarity_search_with_relevance_scores(state["question"], k=4)
+            vector_store.similarity_search_with_relevance_scores(state["question"], k=top_k)
         )
-        if results:
-            docs, scores = zip(*results, strict=False)
-            return {"docs": list(docs), "scores": list(scores)}
-        return {"docs": [], "scores": []}
+        vector_docs = [doc for doc, _score in results]
+        scores = [score for _doc, score in results]
+
+        keyword_docs: list[Document] = []
+        if engine is not None and keyword_k > 0:
+            keyword_docs = keyword_search_chunks(engine, table_name, state["question"], keyword_k)
+
+        docs = rrf_fuse(vector_docs, keyword_docs) if keyword_docs else vector_docs
+        docs = dedupe_chunks(docs, max_per_article=max_per_article)
+        return {"docs": docs, "scores": scores}
 
     return retrieve
 

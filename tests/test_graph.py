@@ -6,6 +6,7 @@ via the node-factory pattern and patched where the node queries the DB or LLM.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -25,7 +26,14 @@ from agent.nodes.semantic_qa import (
 )
 from agent.prompts import NO_MATCH_RESPONSE
 from agent.routes.route import route_query
-from ingest.catalog_db import count_articles_by_slug, escape_like, list_articles_by_slug
+from ingest.catalog_db import (
+    count_articles_by_slug,
+    count_articles_by_year,
+    escape_like,
+    get_recent_articles,
+    list_articles_by_slug,
+    list_articles_by_year,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -98,6 +106,54 @@ class TestMakeRetrieveNode:
         node = make_retrieve_node(vs)
         node(_state(question="E2E testing tools"))
         vs.similarity_search_with_relevance_scores.assert_called_once_with("E2E testing tools", k=4)
+
+    def test_top_k_is_configurable(self) -> None:
+        vs = MagicMock()
+        vs.similarity_search_with_relevance_scores.return_value = []
+        node = make_retrieve_node(vs, top_k=7)
+        node(_state(question="E2E testing tools"))
+        vs.similarity_search_with_relevance_scores.assert_called_once_with("E2E testing tools", k=7)
+
+    def test_hybrid_fuses_keyword_docs_but_scores_stay_vector_only(self) -> None:
+        """Keyword hits enrich docs; scores stay vector-only (no-match invariant)."""
+        vec_doc = _doc(url="https://www.bitovi.com/blog/vec")
+        vs = MagicMock()
+        vs.similarity_search_with_relevance_scores.return_value = [(vec_doc, 0.9)]
+        kw_doc = Document(
+            id="kw-1",
+            page_content="keyword chunk",
+            metadata={"source_url": "https://www.bitovi.com/blog/kw", "title": "KW"},
+        )
+        with patch(
+            "agent.nodes.semantic_qa.keyword_search_chunks", return_value=[kw_doc]
+        ) as kw_mock:
+            node = make_retrieve_node(vs, engine=MagicMock(spec=sa.Engine))
+            result = node(_state(question="E2E testing tools"))
+        kw_mock.assert_called_once()
+        urls = {d.metadata["source_url"] for d in result["docs"]}
+        assert urls == {"https://www.bitovi.com/blog/vec", "https://www.bitovi.com/blog/kw"}
+        assert result["scores"] == [0.9]
+
+    def test_keyword_k_zero_disables_hybrid(self) -> None:
+        vs = MagicMock()
+        vs.similarity_search_with_relevance_scores.return_value = []
+        with patch("agent.nodes.semantic_qa.keyword_search_chunks") as kw_mock:
+            node = make_retrieve_node(vs, engine=MagicMock(spec=sa.Engine), keyword_k=0)
+            node(_state())
+        kw_mock.assert_not_called()
+
+    def test_dedupe_caps_chunks_per_article(self) -> None:
+        url = "https://www.bitovi.com/blog/big"
+        docs = [
+            Document(page_content=f"chunk {i}", metadata={"source_url": url, "title": "Big"})
+            for i in range(4)
+        ]
+        vs = MagicMock()
+        vs.similarity_search_with_relevance_scores.return_value = [(d, 0.9) for d in docs]
+        node = make_retrieve_node(vs, max_per_article=2)
+        result = node(_state())
+        assert len(result["docs"]) == 2
+        assert len(result["scores"]) == 4  # scores untouched by dedupe
 
 
 # ---------------------------------------------------------------------------
@@ -790,3 +846,170 @@ class TestGenerateNodeStructuredOutput:
         full_prompt = " ".join(captured)
         assert "<DATA_SOURCE>" in full_prompt
         assert "What is Bitovi?" in full_prompt
+
+
+# ---------------------------------------------------------------------------
+# recency: direction (oldest), parsed limit, slug filter, parity fallback
+# ---------------------------------------------------------------------------
+
+
+class TestRecencyDirectionAndLimit:
+    def test_oldest_skips_rss_overlay(self) -> None:
+        """RSS feeds only carry newest items — oldest must never fetch the feed."""
+        with (
+            patch("agent.nodes.recency.get_recent_articles", return_value=[_SQL_ROW]),
+            patch("agent.nodes.recency.fetch_recent") as rss_mock,
+        ):
+            node = make_hybrid_recency_node(_mock_engine())
+            result = node(_state(query_type="recency", recency_direction="oldest"))
+        rss_mock.assert_not_called()
+        assert "oldest post" in result["answer"]
+
+    def test_direction_limit_and_slug_passed_to_sql(self) -> None:
+        engine = _mock_engine()
+        with (
+            patch("agent.nodes.recency.get_recent_articles", return_value=[_SQL_ROW]) as sql_mock,
+            patch("agent.nodes.recency.fetch_recent", return_value=[]),
+        ):
+            node = make_hybrid_recency_node(engine)
+            node(
+                _state(
+                    query_type="recency",
+                    recency_direction="oldest",
+                    recency_limit=5,
+                    category_slug="react",
+                )
+            )
+        sql_mock.assert_called_once_with(engine, limit=5, oldest=True, slug="react")
+
+    def test_newest_default_still_fetches_rss(self) -> None:
+        with (
+            patch("agent.nodes.recency.get_recent_articles", return_value=[_SQL_ROW]),
+            patch("agent.nodes.recency.fetch_recent", return_value=[]) as rss_mock,
+        ):
+            node = make_hybrid_recency_node(_mock_engine())
+            node(_state(query_type="recency", recency_limit=5))
+        rss_mock.assert_called_once_with(None, limit=5)
+
+    def test_empty_rows_with_slug_falls_back_to_topic_page(self) -> None:
+        """Reference-link parity: empty result still ships one source."""
+        with (
+            patch("agent.nodes.recency.get_recent_articles", return_value=[]),
+            patch("agent.nodes.recency.fetch_recent", return_value=[]),
+        ):
+            node = make_hybrid_recency_node(_mock_engine())
+            result = node(_state(query_type="recency", category_slug="react"))
+        assert result["sources"] == [
+            {
+                "title": "All Bitovi articles about react",
+                "url": f"{BASE}/blog/topic/react/page/1",
+            }
+        ]
+
+    def test_empty_rows_without_slug_falls_back_to_blog_root(self) -> None:
+        with (
+            patch("agent.nodes.recency.get_recent_articles", return_value=[]),
+            patch("agent.nodes.recency.fetch_recent", return_value=[]),
+        ):
+            node = make_hybrid_recency_node(_mock_engine())
+            result = node(_state(query_type="recency"))
+        assert result["sources"] == [{"title": "Bitovi Blog", "url": f"{BASE}/blog"}]
+
+
+# ---------------------------------------------------------------------------
+# catalog nodes: year filter + enumeration parity fallback
+# ---------------------------------------------------------------------------
+
+
+class TestCatalogYearFilter:
+    def test_count_with_year_uses_year_query(self) -> None:
+        engine = _mock_engine()
+        with patch("agent.nodes.catalog.count_articles_by_year", return_value=17) as year_mock:
+            node = make_sql_count_node(engine)
+            result = node(_state(query_type="count", year=2023))
+        year_mock.assert_called_once_with(engine, 2023, slug=None)
+        assert "17 articles published in 2023" in result["answer"]
+        assert result["sources"] == [{"title": "Bitovi Blog", "url": f"{BASE}/blog"}]
+
+    def test_count_with_year_and_slug(self) -> None:
+        engine = _mock_engine()
+        with patch("agent.nodes.catalog.count_articles_by_year", return_value=5) as year_mock:
+            node = make_sql_count_node(engine)
+            result = node(_state(query_type="count", year=2023, category_slug="react"))
+        year_mock.assert_called_once_with(engine, 2023, slug="react")
+        assert "about react published in 2023" in result["answer"]
+
+    def test_enumerate_with_year_uses_year_query(self) -> None:
+        engine = _mock_engine()
+        rows = [{"title": "A", "url": f"{BASE}/blog/a"}]
+        with patch("agent.nodes.catalog.list_articles_by_year", return_value=rows) as year_mock:
+            node = make_sql_enumerate_node(engine)
+            result = node(_state(query_type="enumeration", year=2023))
+        year_mock.assert_called_once_with(engine, 2023, slug=None)
+        assert "published in 2023" in result["answer"]
+        assert result["sources"] == rows
+
+    def test_enumerate_empty_result_keeps_parity(self) -> None:
+        """Reference-link parity: empty enumeration still ships one source."""
+        engine = _mock_engine()
+        with patch("agent.nodes.catalog.list_articles_by_slug", return_value=[]):
+            node = make_sql_enumerate_node(engine)
+            result = node(_state(query_type="enumeration", category_slug="react"))
+        assert result["answer"] == "No articles found."
+        assert result["sources"] == [{"title": "Bitovi Blog", "url": f"{BASE}/blog"}]
+
+
+# ---------------------------------------------------------------------------
+# catalog_db SQL shape: direction-aware recency + year bounds
+# ---------------------------------------------------------------------------
+
+
+class TestRecencyAndYearSql:
+    def _capture_sql(self, call: Any) -> tuple[str, dict[str, Any]]:
+        """Run call against a mock engine; return (sql_text, params) of first execute."""
+        captured: list[tuple[str, dict[str, Any]]] = []
+
+        conn = MagicMock()
+        result = MagicMock()
+        result.fetchone.return_value = (0,)
+        result.fetchall.return_value = []
+
+        def capture_execute(stmt: Any, params: dict[str, Any] | None = None) -> MagicMock:
+            captured.append((str(stmt), params or {}))
+            return result
+
+        conn.__enter__ = MagicMock(return_value=conn)
+        conn.__exit__ = MagicMock(return_value=False)
+        conn.execute = capture_execute
+        engine = MagicMock(spec=sa.Engine)
+        engine.connect.return_value = conn
+
+        call(engine)
+        assert captured, "execute was never called"
+        return captured[0]
+
+    def test_newest_orders_desc_nulls_last(self) -> None:
+        sql, _ = self._capture_sql(lambda e: get_recent_articles(e))
+        assert "DESC NULLS LAST" in sql
+
+    def test_oldest_orders_asc_nulls_last(self) -> None:
+        sql, _ = self._capture_sql(lambda e: get_recent_articles(e, oldest=True))
+        assert "ASC NULLS LAST" in sql
+
+    def test_slug_filter_uses_escaped_ilike(self) -> None:
+        sql, params = self._capture_sql(lambda e: get_recent_articles(e, slug="re_act"))
+        assert "ILIKE :pat ESCAPE" in sql
+        assert params["pat"] == "%,re\\_act,%"
+
+    def test_count_by_year_uses_half_open_tz_bounds(self) -> None:
+        sql, params = self._capture_sql(lambda e: count_articles_by_year(e, 2023))
+        assert "published_at >= :start" in sql
+        assert "published_at < :end" in sql
+        assert params["start"] == datetime(2023, 1, 1, tzinfo=UTC)
+        assert params["end"] == datetime(2024, 1, 1, tzinfo=UTC)
+
+    def test_list_by_year_with_slug_combines_filters(self) -> None:
+        sql, params = self._capture_sql(lambda e: list_articles_by_year(e, 2024, slug="ai"))
+        assert "published_at >= :start" in sql
+        assert "ILIKE :pat ESCAPE" in sql
+        assert params["pat"] == "%,ai,%"

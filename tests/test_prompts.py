@@ -151,3 +151,56 @@ class TestRenderRecency:
         ]
         result = render_recency(items)
         assert "other recent posts" in result.lower()
+
+
+# ---------------------------------------------------------------------------
+# Year-filter and oldest-direction renderer variants
+# ---------------------------------------------------------------------------
+
+
+class TestRenderCountYear:
+    def test_year_only(self) -> None:
+        out = render_count(17, None, year=2023)
+        assert out == "There are 17 articles published in 2023 on the Bitovi blog."
+
+    def test_year_and_slug(self) -> None:
+        out = render_count(5, "react", year=2023)
+        assert "about react published in 2023" in out
+
+    def test_zero_with_year(self) -> None:
+        out = render_count(0, None, year=2020)
+        assert out.startswith("There are no articles published in 2020")
+
+
+class TestRenderEnumerationYear:
+    def test_year_only_wording(self) -> None:
+        rows = [{"title": "A", "url": "https://www.bitovi.com/blog/a"}]
+        out = render_enumeration(rows, None, year=2023)
+        assert "published in 2023" in out
+        assert "http" not in out
+
+    def test_year_and_slug_wording(self) -> None:
+        rows = [{"title": "A", "url": "https://www.bitovi.com/blog/a"}]
+        out = render_enumeration(rows, "react", year=2023)
+        assert "tagged react published in 2023" in out
+
+
+class TestRenderRecencyOldest:
+    _ITEM = {"title": "First Post", "date": "March 1, 2010", "url": "https://x/b"}
+    _ITEM2 = {"title": "Second Post", "date": "April 2, 2010", "url": "https://x/c"}
+
+    def test_oldest_lead_wording(self) -> None:
+        out = render_recency([self._ITEM], oldest=True)
+        assert out.startswith('The oldest post on the Bitovi blog is "First Post"')
+
+    def test_oldest_no_inline_url(self) -> None:
+        out = render_recency([self._ITEM, self._ITEM2], oldest=True)
+        assert "http" not in out
+
+    def test_oldest_multiple_trailing_sentence(self) -> None:
+        out = render_recency([self._ITEM, self._ITEM2], oldest=True)
+        assert "other early posts" in out
+
+    def test_newest_wording_unchanged(self) -> None:
+        out = render_recency([self._ITEM])
+        assert out.startswith("The most recent post on the Bitovi blog")
